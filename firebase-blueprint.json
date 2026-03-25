@@ -1,0 +1,102 @@
+{
+  "entities": {
+    "Signal": {
+      "title": "Signal",
+      "description": "A trading signal received from an external source.",
+      "type": "object",
+      "properties": {
+        "symbol": { "type": "string", "description": "The trading pair symbol (e.g., EURUSD)." },
+        "timeframe": { "type": "string", "description": "The timeframe of the signal (e.g., 15m, 1h)." },
+        "signal_type": { "type": "string", "description": "The type of signal (e.g., CHoCH, BoS, OrderBlock)." },
+        "confidence": { "type": "number", "description": "The confidence score of the signal (0-100)." },
+        "raw_data": { "type": "object", "description": "The raw JSON payload from the webhook." },
+        "created_at": { "type": "string", "format": "date-time", "description": "The timestamp when the signal was received." }
+      },
+      "required": ["symbol", "timeframe", "signal_type", "confidence", "created_at"]
+    },
+    "Analysis": {
+      "title": "Analysis",
+      "description": "AI-powered analysis of a trading signal.",
+      "type": "object",
+      "properties": {
+        "signal_id": { "type": "string", "description": "The ID of the associated signal." },
+        "gpt_analysis": { "type": "string", "description": "The detailed analysis text from the AI." },
+        "confidence_score": { "type": "number", "description": "The AI's confidence score (0-100)." },
+        "recommendation": { "type": "string", "description": "The AI's recommendation (e.g., BUY, SELL, HOLD)." },
+        "policy_decision": { "type": "string", "description": "The institutional policy decision (ALLOW, HOLD, BLOCK)." },
+        "policy_commentary": { "type": "string", "description": "The AI's explanation for the policy decision." },
+        "memory_references": { "type": "array", "items": { "type": "string" }, "description": "IDs of similar past signals or trades used as context." },
+        "feedback_context_summary": { "type": "string", "description": "Summary of historical performance context used by the evaluator." },
+        "memory_alignment": { "type": "object", "description": "Detailed breakdown of how the signal aligns with historical memory." },
+        "feedback_effect": { "type": "object", "description": "How historical feedback influenced the evaluation strictness." },
+        "pipeline_results": { "type": "object", "description": "Full structured results from each pipeline stage." },
+        "trade_plan": { "type": "object", "description": "The AI's proposed entry, stop loss, and take profit levels." },
+        "created_at": { "type": "string", "format": "date-time", "description": "The timestamp when the analysis was generated." }
+      },
+      "required": ["signal_id", "gpt_analysis", "confidence_score", "recommendation", "created_at"]
+    },
+    "User": {
+      "title": "User",
+      "description": "A user of the ICT Trading System.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique ID of the user." },
+        "email": { "type": "string", "format": "email", "description": "The email address of the user." },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "The role of the user." },
+        "created_at": { "type": "string", "format": "date-time", "description": "The timestamp when the user was created." }
+      },
+      "required": ["uid", "email", "role", "created_at"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Trading automation settings and safety guards.",
+      "type": "object",
+      "properties": {
+        "is_kill_switch_active": { "type": "boolean", "description": "If true, all automated trading is stopped." },
+        "auto_trade_enabled": { "type": "boolean", "description": "Master toggle for automated trading." },
+        "min_confidence_threshold": { "type": "number", "description": "Minimum AI confidence score to execute a trade." },
+        "max_risk_per_trade_pct": { "type": "number", "description": "Maximum percentage of balance to risk per trade." },
+        "daily_loss_limit_usd": { "type": "number", "description": "Stop trading if daily loss exceeds this amount." }
+      },
+      "required": ["is_kill_switch_active", "auto_trade_enabled", "min_confidence_threshold", "max_risk_per_trade_pct"]
+    },
+    "Trade": {
+      "title": "Trade",
+      "description": "An executed trade based on AI recommendation.",
+      "type": "object",
+      "properties": {
+        "signal_id": { "type": "string", "description": "The ID of the associated signal." },
+        "analysis_id": { "type": "string", "description": "The ID of the associated analysis." },
+        "type": { "type": "string", "enum": ["BUY", "SELL"], "description": "The trade direction." },
+        "status": { "type": "string", "enum": ["OPEN", "CLOSED", "CANCELLED"], "description": "Current status of the trade." },
+        "entry_price": { "type": "number", "description": "The price at which the trade was entered." },
+        "stop_loss": { "type": "number", "description": "The stop loss price." },
+        "take_profit": { "type": "number", "description": "The take profit price." },
+        "executed_at": { "type": "string", "format": "date-time", "description": "The timestamp when the trade was executed." }
+      },
+      "required": ["signal_id", "analysis_id", "type", "status", "entry_price", "executed_at"]
+    }
+  },
+  "firestore": {
+    "/signals/{signalId}": {
+      "schema": "Signal",
+      "description": "Collection of trading signals."
+    },
+    "/analyses/{analysisId}": {
+      "schema": "Analysis",
+      "description": "Collection of AI-powered signal analyses."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user profiles."
+    },
+    "/settings/{userId}": {
+      "schema": "Settings",
+      "description": "User-specific trading settings."
+    },
+    "/trades/{tradeId}": {
+      "schema": "Trade",
+      "description": "Collection of executed trades."
+    }
+  }
+}
