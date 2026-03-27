@@ -95,8 +95,8 @@
 
 /* Component Styles */
 .bento-card {
-  @apply bg-zinc-900/40 backdrop-blur-xl border border-zinc-800/50 rounded-3xl transition-all duration-500 
-         hover:bg-zinc-900/60 hover:border-emerald-500/30 hover:scale-[1.005] relative overflow-hidden;
+  @apply bg-zinc-900/40 border border-zinc-800/50 rounded-3xl transition-all duration-500 
+         hover:bg-zinc-900/60 hover:border-emerald-500/30 relative overflow-hidden;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 

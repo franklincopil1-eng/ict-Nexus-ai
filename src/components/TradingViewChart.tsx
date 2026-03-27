@@ -12,13 +12,14 @@ const TradingViewChart = ({ symbol, interval, studies = [] }: TradingViewChartPr
   useEffect(() => {
     if (!container.current) return;
 
-    // Clear previous widget
-    container.current.innerHTML = '';
+    const containerRef = container.current;
+    containerRef.innerHTML = '';
 
     const script = document.createElement("script");
     script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
     script.type = "text/javascript";
     script.async = true;
+    script.crossOrigin = "anonymous";
     script.innerHTML = JSON.stringify({
       "autosize": true,
       "symbol": symbol,
@@ -40,7 +41,13 @@ const TradingViewChart = ({ symbol, interval, studies = [] }: TradingViewChartPr
       "studies": studies
     });
 
-    container.current.appendChild(script);
+    containerRef.appendChild(script);
+
+    return () => {
+      if (containerRef) {
+        containerRef.innerHTML = '';
+      }
+    };
   }, [symbol, interval, studies]);
 
   return (

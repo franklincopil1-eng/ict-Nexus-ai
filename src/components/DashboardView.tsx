@@ -42,11 +42,53 @@ const DashboardView = ({
   onSimulate,
   onStageClick
 }: DashboardViewProps) => {
+  // Split signals into Spotlight (top 2) and Matrix (the rest)
+  const spotlightSignals = signals.slice(0, 2);
+  const matrixSignals = signals.slice(2);
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:h-[calc(100vh-180px)]">
-      {/* Left Column: Signal Feed */}
-      <div className="lg:col-span-4 flex flex-col gap-6 lg:h-full">
+    <div className="flex flex-col lg:grid lg:grid-cols-12 gap-6 lg:h-[calc(100vh-180px)]">
+      {/* Mobile: Neural Ribbon (Horizontal Scroll) */}
+      <div className="lg:hidden flex flex-col gap-3">
         <div className="flex items-center justify-between px-2">
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 emerald-glow animate-pulse" />
+            <h2 className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Neural Ribbon</h2>
+          </div>
+          <button 
+            onClick={onSimulate}
+            className="p-1.5 text-emerald-500 hover:text-emerald-400 transition-colors flex items-center gap-1 bg-emerald-500/10 rounded border border-emerald-500/20"
+          >
+            <Zap size={12} />
+            <span className="text-[8px] font-bold uppercase tracking-widest">Simulate</span>
+          </button>
+        </div>
+        <div className="flex gap-3 overflow-x-auto pb-4 px-2 custom-scrollbar snap-x">
+          {signals.map((signal) => (
+            <div 
+              key={signal.id}
+              className="snap-center shrink-0 w-[280px]"
+            >
+              <SignalRow 
+                signal={signal} 
+                analysis={analyses[signal.id]}
+                active={selectedSignal?.id === signal.id}
+                variant="ribbon"
+                onClick={() => setSelectedSignal(signal)}
+              />
+            </div>
+          ))}
+          {signals.length === 0 && (
+            <div className="w-full py-8 text-center border border-dashed border-zinc-800 rounded-2xl">
+              <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">Waiting for Neural Feed...</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Desktop: Left Column (Spotlight + Matrix) */}
+      <div className="hidden lg:flex lg:col-span-4 flex-col gap-6 lg:h-full overflow-hidden">
+        <div className="flex items-center justify-between px-2 shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-2 h-2 rounded-full bg-emerald-500 emerald-glow animate-pulse" />
             <h2 className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Live Signal Feed</h2>
@@ -69,20 +111,52 @@ const DashboardView = ({
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
-          <AnimatePresence mode="popLayout">
-            {signals.map((signal) => (
-              <SignalRow 
-                key={signal.id} 
-                signal={signal} 
-                analysis={analyses[signal.id]}
-                active={selectedSignal?.id === signal.id}
-                onClick={() => {
-                  setSelectedSignal(signal);
-                }}
-              />
-            ))}
-          </AnimatePresence>
+        <div className="flex-1 overflow-y-auto pr-2 space-y-6 custom-scrollbar">
+          {/* Zone 1: The Spotlight */}
+          {spotlightSignals.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 px-2">
+                <Zap size={10} className="text-emerald-500" />
+                <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest">Neural Spotlight</span>
+              </div>
+              <AnimatePresence mode="popLayout">
+                {spotlightSignals.map((signal) => (
+                  <SignalRow 
+                    key={signal.id} 
+                    signal={signal} 
+                    analysis={analyses[signal.id]}
+                    active={selectedSignal?.id === signal.id}
+                    variant="spotlight"
+                    onClick={() => setSelectedSignal(signal)}
+                  />
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
+
+          {/* Zone 2: The Matrix */}
+          {matrixSignals.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 px-2 pt-2 border-t border-zinc-800/50">
+                <LayoutGrid size={10} className="text-zinc-600" />
+                <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest">Neural Matrix</span>
+              </div>
+              <div className="space-y-1">
+                <AnimatePresence mode="popLayout">
+                  {matrixSignals.map((signal) => (
+                    <SignalRow 
+                      key={signal.id} 
+                      signal={signal} 
+                      analysis={analyses[signal.id]}
+                      active={selectedSignal?.id === signal.id}
+                      variant="matrix"
+                      onClick={() => setSelectedSignal(signal)}
+                    />
+                  ))}
+                </AnimatePresence>
+              </div>
+            </div>
+          )}
           
           {signals.length === 0 && (
             <div className="flex flex-col items-center justify-center h-96 text-center">

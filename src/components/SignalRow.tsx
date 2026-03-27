@@ -9,9 +9,10 @@ interface SignalRowProps {
   analysis?: Analysis;
   onClick: () => void;
   active: boolean;
+  variant?: 'spotlight' | 'matrix' | 'ribbon';
 }
 
-const SignalRow = ({ signal, analysis, onClick, active }: SignalRowProps) => {
+const SignalRow = ({ signal, analysis, onClick, active, variant = 'spotlight' }: SignalRowProps) => {
   const [showLevels, setShowLevels] = useState(false);
   const pipelineCount = analysis?.pipeline_results ? Object.keys(analysis.pipeline_results).length : 0;
   const totalStages = 10;
@@ -21,12 +22,101 @@ const SignalRow = ({ signal, analysis, onClick, active }: SignalRowProps) => {
   const fvgCount = analysis?.ict_levels?.fair_value_gaps?.length || 0;
   const hasLevels = obCount > 0 || fvgCount > 0;
 
+  const timeStr = signal.created_at?.toDate 
+    ? signal.created_at.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+    : '...';
+
+  if (variant === 'matrix') {
+    return (
+      <motion.div 
+        layout
+        initial={{ opacity: 0, x: -20 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: 20 }}
+        onClick={onClick}
+        className={cn(
+          "px-4 py-2 cursor-pointer transition-all duration-300 flex items-center justify-between border-l-2",
+          active 
+            ? "bg-emerald-500/10 border-l-emerald-500 shadow-sm" 
+            : "hover:bg-zinc-900/40 border-l-transparent"
+        )}
+      >
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] font-bold text-zinc-100 uppercase tracking-tight w-16">{signal.symbol}</span>
+          <span className="text-[9px] text-zinc-500 font-mono">{timeStr}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          {analysis?.confidence_score && (
+            <span className="text-[9px] font-bold text-zinc-500">{analysis.confidence_score}%</span>
+          )}
+          <div className={cn(
+            "w-2 h-2 rounded-full",
+            analysis?.recommendation === 'BUY' ? "bg-emerald-500 emerald-glow" : 
+            analysis?.recommendation === 'SELL' ? "bg-rose-500 rose-glow" : 
+            "bg-zinc-700"
+          )} />
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (variant === 'ribbon') {
+    return (
+      <div 
+        onClick={onClick}
+        className={cn(
+          "p-4 rounded-2xl border transition-all duration-300 cursor-pointer h-full flex flex-col justify-between",
+          active 
+            ? "bg-emerald-500/10 border-emerald-500/30 shadow-lg shadow-emerald-500/5" 
+            : "bg-zinc-900/40 border-zinc-800/50 hover:border-zinc-700"
+        )}
+      >
+        <div className="flex justify-between items-start">
+          <div>
+            <div className="text-sm font-bold text-zinc-100 uppercase tracking-tight">{signal.symbol}</div>
+            <div className="text-[8px] text-zinc-500 uppercase tracking-widest mt-0.5">{signal.signal_type} • {signal.timeframe}</div>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] font-mono text-zinc-500">{timeStr}</div>
+            {analysis?.confidence_score && (
+              <div className="text-[9px] font-bold text-emerald-500 mt-0.5">{analysis.confidence_score}%</div>
+            )}
+          </div>
+        </div>
+        
+        <div className="mt-4">
+          <div className="flex justify-between items-center mb-1.5">
+            <div className={cn(
+              "text-[8px] font-bold px-1.5 py-0.5 rounded uppercase tracking-widest",
+              analysis?.recommendation === 'BUY' ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" : 
+              analysis?.recommendation === 'SELL' ? "bg-rose-500/10 text-rose-500 border border-rose-500/20" : 
+              "bg-zinc-800 text-zinc-500 border border-zinc-700"
+            )}>
+              {analysis?.recommendation || 'SYNCING...'}
+            </div>
+            <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">{pipelineCount}/{totalStages} Stages</span>
+          </div>
+          <div className="w-full bg-zinc-950/50 h-1 rounded-full overflow-hidden border border-zinc-800/50">
+            <motion.div 
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              className={cn(
+                "h-full transition-all duration-500",
+                progress === 100 ? "bg-emerald-500 emerald-glow" : "bg-blue-500"
+              )}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div 
       className={cn(
         "border-b border-zinc-800/50 transition-all duration-300 relative overflow-hidden group",
-        "hover:scale-[1.01] hover:z-10",
-        active ? "bg-emerald-500/5 border-l-2 border-l-emerald-500 shadow-lg shadow-emerald-500/5" : "hover:bg-zinc-900/60 backdrop-blur-md border-l-2 border-l-transparent"
+        "hover:z-10",
+        active ? "bg-emerald-500/5 border-l-2 border-l-emerald-500 shadow-lg shadow-emerald-500/5" : "hover:bg-zinc-900/60 border-l-2 border-l-transparent"
       )}
     >
       <div className="p-4 sm:p-6 cursor-pointer" onClick={onClick}>
@@ -58,21 +148,21 @@ const SignalRow = ({ signal, analysis, onClick, active }: SignalRowProps) => {
         {analysis?.trade_plan && (analysis.trade_plan?.stop_loss || analysis.trade_plan?.take_profit) && (
           <div className="flex gap-4 mb-3">
             {analysis.trade_plan?.entry && (
-              <div className="flex items-center gap-1.5" title={`Entry Price: ${analysis.trade_plan.entry}`}>
+              <div className="flex items-center gap-1.5" title={`Exact Entry Price: ${analysis.trade_plan.entry}`}>
                 <span className="text-[9px] font-bold text-blue-500/80 uppercase tracking-tighter">Entry</span>
-                <span className="text-xs font-mono text-blue-400/90">{analysis.trade_plan.entry}</span>
+                <span className="text-xs font-mono text-blue-400/90">{Number(analysis.trade_plan.entry).toFixed(5)}</span>
               </div>
             )}
             {analysis.trade_plan?.stop_loss && (
               <div className="flex items-center gap-1.5" title={`Exact Stop Loss: ${analysis.trade_plan.stop_loss}`}>
                 <span className="text-[9px] font-bold text-rose-500/80 uppercase tracking-tighter">SL</span>
-                <span className="text-xs font-mono text-rose-400/90">{analysis.trade_plan.stop_loss}</span>
+                <span className="text-xs font-mono text-rose-400/90">{Number(analysis.trade_plan.stop_loss).toFixed(5)}</span>
               </div>
             )}
             {analysis.trade_plan?.take_profit && (
               <div className="flex items-center gap-1.5" title={`Exact Take Profit: ${analysis.trade_plan.take_profit}`}>
                 <span className="text-[9px] font-bold text-emerald-500/80 uppercase tracking-tighter">TP</span>
-                <span className="text-xs font-mono text-emerald-400/90">{analysis.trade_plan.take_profit}</span>
+                <span className="text-xs font-mono text-emerald-400/90">{Number(analysis.trade_plan.take_profit).toFixed(5)}</span>
               </div>
             )}
           </div>
@@ -123,7 +213,7 @@ const SignalRow = ({ signal, analysis, onClick, active }: SignalRowProps) => {
                     )} />
                     <span className="text-zinc-400 uppercase font-bold tracking-widest">Order Block</span>
                   </div>
-                  <span className="font-mono text-zinc-200">{ob.price}</span>
+                  <span className="font-mono text-zinc-200">{Number(ob.price).toFixed(5)}</span>
                 </div>
               ))}
               {analysis?.ict_levels?.fair_value_gaps?.map((fvg, i) => (
@@ -135,7 +225,7 @@ const SignalRow = ({ signal, analysis, onClick, active }: SignalRowProps) => {
                     )} />
                     <span className="text-zinc-400 uppercase font-bold tracking-widest">Fair Value Gap</span>
                   </div>
-                  <span className="font-mono text-zinc-200">{fvg.top} - {fvg.bottom}</span>
+                  <span className="font-mono text-zinc-200">{Number(fvg.top).toFixed(5)} - {Number(fvg.bottom).toFixed(5)}</span>
                 </div>
               ))}
             </motion.div>

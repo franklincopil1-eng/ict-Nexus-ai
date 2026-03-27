@@ -79,7 +79,7 @@ import DashboardView from './components/DashboardView';
 import BacktestView from './components/BacktestView';
 import TradesView from './components/TradesView';
 import SettingsView from './components/SettingsView';
-import UsersView from './components/UsersView';
+import SystemDataExplorer from './components/SystemDataExplorer';
 import SystemAudit from './components/SystemAudit';
 import DeepAuditView from './components/DeepAuditView';
 import TestScenarios from './components/TestScenarios';
@@ -137,10 +137,13 @@ export default function App() {
   }, [isManualSidebar]);
 
   // --- Backtest Logic ---
-  const handleRunBacktest = async () => {
+  const handleRunBacktest = async (config: { symbol: string; timeframe: string; indicators: string[] }) => {
     setIsBacktesting(true);
-    const data = generateHistoricalData('EURUSD', 30);
-    const result = await runICTBacktest(data, 'EURUSD');
+    // Simulate network delay for realistic feel
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    const data = generateHistoricalData(config.symbol, 30);
+    const result = await runICTBacktest(data, config.symbol);
     setBacktestResult(result);
     setIsBacktesting(false);
   };
@@ -763,7 +766,7 @@ export default function App() {
                 transition={{ duration: 0.3 }}
                 className="p-8 overflow-y-auto custom-scrollbar h-full"
               >
-                <TradesView trades={trades} />
+                <TradesView trades={trades} signals={signals} analyses={analyses} />
               </motion.div>
             )}
 
@@ -802,7 +805,12 @@ export default function App() {
                 transition={{ duration: 0.3 }}
                 className="p-8 overflow-y-auto custom-scrollbar h-full"
               >
-                <UsersView users={allUsers} />
+                <SystemDataExplorer 
+                  users={allUsers} 
+                  trades={trades} 
+                  signals={signals} 
+                  analyses={Object.values(analyses)} 
+                />
               </motion.div>
             )}
 

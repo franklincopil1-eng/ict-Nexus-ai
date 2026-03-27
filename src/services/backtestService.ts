@@ -36,12 +36,20 @@ export interface TradeResult {
 // Mock Historical Data Generator
 export function generateHistoricalData(symbol: string, days: number = 30): Candle[] {
   const candles: Candle[] = [];
-  let currentPrice = 1.1000; // Starting price for EURUSD-like pair
+  
+  // Set realistic starting price based on symbol
+  let currentPrice = 1.1000;
+  if (symbol.includes('GBP')) currentPrice = 1.2500;
+  if (symbol.includes('JPY')) currentPrice = 150.00;
+  if (symbol.includes('AUD')) currentPrice = 0.6500;
+  if (symbol.includes('BTC')) currentPrice = 65000.00;
+  if (symbol.includes('ETH')) currentPrice = 3500.00;
+  
   const now = new Date();
   
   for (let i = 0; i < days * 24; i++) {
     const time = new Date(now.getTime() - (days * 24 - i) * 60 * 60 * 1000);
-    const volatility = 0.0020;
+    const volatility = symbol.includes('BTC') || symbol.includes('ETH') ? currentPrice * 0.005 : 0.0020;
     const open = currentPrice;
     const high = open + Math.random() * volatility;
     const low = open - Math.random() * volatility;

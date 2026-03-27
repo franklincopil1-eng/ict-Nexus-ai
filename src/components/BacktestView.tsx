@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Play, 
   Shield, 
@@ -6,7 +6,11 @@ import {
   TrendingUp,
   BarChart3,
   Zap,
-  Activity
+  Activity,
+  Globe,
+  Clock,
+  Layers,
+  Check
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -22,42 +26,187 @@ import { BacktestResult } from '../services/backtestService';
 
 interface BacktestViewProps {
   isBacktesting: boolean;
-  handleRunBacktest: () => void;
+  handleRunBacktest: (config: { symbol: string; timeframe: string; indicators: string[] }) => void;
   backtestResult: BacktestResult | null;
 }
+
+const SYMBOLS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'BTC/USD', 'ETH/USD'];
+const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'];
+const INDICATORS = [
+  'ICT Order Blocks', 
+  'Fair Value Gaps', 
+  'Relative Strength Index', 
+  'MACD', 
+  'Bollinger Bands'
+];
 
 const BacktestView = ({ 
   isBacktesting, 
   handleRunBacktest, 
   backtestResult 
 }: BacktestViewProps) => {
+  const [selectedSymbol, setSelectedSymbol] = useState(SYMBOLS[0]);
+  const [selectedTimeframe, setSelectedTimeframe] = useState(TIMEFRAMES[3]); // 1h
+  const [selectedIndicators, setSelectedIndicators] = useState<string[]>([INDICATORS[0], INDICATORS[1]]);
+
+  const toggleIndicator = (indicator: string) => {
+    setSelectedIndicators(prev => 
+      prev.includes(indicator) 
+        ? prev.filter(i => i !== indicator) 
+        : [...prev, indicator]
+    );
+  };
+
+  const onRunClick = () => {
+    handleRunBacktest({
+      symbol: selectedSymbol,
+      timeframe: selectedTimeframe,
+      indicators: selectedIndicators
+    });
+  };
+
   return (
     <div className="space-y-8">
-      <div className="bento-card p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 group hover:border-zinc-700 transition-colors">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-bold mb-1 text-zinc-100 uppercase tracking-tight">Neural Backtest Engine</h2>
-          <p className="micro-label text-zinc-500 group-hover:text-zinc-400 transition-colors">Historical Market Simulation • Liquidity Cycle Audit</p>
+      {/* Configuration Panel */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="lg:col-span-8 space-y-6">
+          <div className="bento-card p-6 sm:p-8 group hover:border-zinc-700 transition-colors">
+            <div className="flex items-center gap-3 mb-8">
+              <History className="text-emerald-500" size={20} />
+              <h2 className="text-xl font-bold text-zinc-100 uppercase tracking-tight">Simulation Parameters</h2>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Symbol Selection */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                  <Globe size={12} />
+                  Asset Selection
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {SYMBOLS.map(symbol => (
+                    <button
+                      key={symbol}
+                      onClick={() => setSelectedSymbol(symbol)}
+                      className={cn(
+                        "px-4 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest border transition-all",
+                        selectedSymbol === symbol 
+                          ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/30 emerald-glow" 
+                          : "bg-zinc-900/50 text-zinc-500 border-zinc-800/50 hover:border-zinc-700"
+                      )}
+                    >
+                      {symbol}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Timeframe Selection */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                  <Clock size={12} />
+                  Temporal Resolution
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {TIMEFRAMES.map(tf => (
+                    <button
+                      key={tf}
+                      onClick={() => setSelectedTimeframe(tf)}
+                      className={cn(
+                        "px-3 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest border transition-all",
+                        selectedTimeframe === tf 
+                          ? "bg-blue-500/10 text-blue-500 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.1)]" 
+                          : "bg-zinc-900/50 text-zinc-500 border-zinc-800/50 hover:border-zinc-700"
+                      )}
+                    >
+                      {tf}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Indicator Selection */}
+            <div className="mt-8 pt-8 border-t border-zinc-800/50 space-y-4">
+              <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                <Layers size={12} />
+                Neural Indicators
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {INDICATORS.map(indicator => (
+                  <button
+                    key={indicator}
+                    onClick={() => toggleIndicator(indicator)}
+                    className={cn(
+                      "px-4 py-2 rounded-full text-[9px] font-bold uppercase tracking-widest border transition-all flex items-center gap-2",
+                      selectedIndicators.includes(indicator)
+                        ? "bg-zinc-100 text-zinc-950 border-zinc-100"
+                        : "bg-zinc-900/50 text-zinc-500 border-zinc-800/50 hover:border-zinc-700"
+                    )}
+                  >
+                    {selectedIndicators.includes(indicator) && <Check size={10} />}
+                    {indicator}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
-        <button 
-          onClick={handleRunBacktest}
-          disabled={isBacktesting}
-          className={cn(
-            "w-full sm:w-auto px-6 py-3 rounded-xl font-bold uppercase tracking-widest text-[10px] flex items-center justify-center gap-3 transition-all active:scale-95",
-            isBacktesting ? "bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700" : "bg-emerald-500 text-zinc-950 hover:bg-emerald-600 emerald-glow"
-          )}
-        >
-          {isBacktesting ? (
-            <>
-              <div className="w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
-              Simulating...
-            </>
-          ) : (
-            <>
-              <Play size={14} fill="currentColor" />
-              Initiate Simulation
-            </>
-          )}
-        </button>
+
+        <div className="lg:col-span-4 flex flex-col gap-6">
+          <div className="bento-card p-6 flex flex-col items-center justify-center text-center flex-1">
+            <div className={cn(
+              "w-16 h-16 rounded-2xl flex items-center justify-center mb-6 border transition-all duration-500",
+              isBacktesting ? "bg-zinc-900/50 border-zinc-800 animate-pulse" : "bg-emerald-500/10 border-emerald-500/20 emerald-glow"
+            )}>
+              <Play size={24} className={cn(isBacktesting ? "text-zinc-700" : "text-emerald-500")} fill={isBacktesting ? "none" : "currentColor"} />
+            </div>
+            <h3 className="text-lg font-bold text-zinc-100 uppercase tracking-tight mb-2">Engine Control</h3>
+            <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-8 leading-relaxed">
+              Execute historical simulation for {selectedSymbol} on {selectedTimeframe} timeframe with {selectedIndicators.length} active indicators.
+            </p>
+            <button 
+              onClick={onRunClick}
+              disabled={isBacktesting}
+              className={cn(
+                "w-full py-4 rounded-xl font-bold uppercase tracking-widest text-[10px] flex items-center justify-center gap-3 transition-all active:scale-95",
+                isBacktesting ? "bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700" : "bg-emerald-500 text-zinc-950 hover:bg-emerald-600 emerald-glow"
+              )}
+            >
+              {isBacktesting ? (
+                <>
+                  <div className="w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
+                  Simulating...
+                </>
+              ) : (
+                <>
+                  <Play size={14} fill="currentColor" />
+                  Initiate Simulation
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="p-6 bg-zinc-900/50 border border-zinc-800/50 rounded-2xl">
+            <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-4">
+              <Shield size={12} className="text-emerald-500" />
+              Policy Guardrails
+            </div>
+            <ul className="space-y-3">
+              {[
+                'Max Drawdown Protection',
+                'Liquidity Sweep Validation',
+                'Risk/Reward Ratio Audit',
+                'Volume Profile Alignment'
+              ].map(item => (
+                <li key={item} className="flex items-center gap-3 text-[9px] font-bold text-zinc-600 uppercase tracking-widest">
+                  <div className="w-1 h-1 rounded-full bg-emerald-500/50" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
       </div>
 
       {backtestResult ? (
