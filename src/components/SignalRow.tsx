@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { Signal, Analysis } from '../types';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Layers } from 'lucide-react';
 
 interface SignalRowProps {
   signal: Signal;
@@ -26,6 +26,9 @@ const SignalRow = ({ signal, analysis, onClick, active, variant = 'spotlight' }:
     ? signal.created_at.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
     : '...';
 
+  const regime = analysis?.pipeline_results?.regime?.regime;
+  const bias = analysis?.pipeline_results?.htf_bias?.bias;
+
   if (variant === 'matrix') {
     return (
       <motion.div 
@@ -42,10 +45,52 @@ const SignalRow = ({ signal, analysis, onClick, active, variant = 'spotlight' }:
         )}
       >
         <div className="flex items-center gap-3">
-          <span className="text-[11px] font-bold text-zinc-100 uppercase tracking-tight w-16">{signal.symbol}</span>
+          <div className="relative">
+            <span className="text-[11px] font-bold text-zinc-100 uppercase tracking-tight w-16 block">{signal.symbol}</span>
+            {hasLevels && (
+              <div className={cn(
+                "absolute -right-1 -top-1 w-1.5 h-1.5 rounded-full bg-blue-500",
+                active ? "animate-pulse blue-glow" : "opacity-50"
+              )} title="ICT Levels Detected" />
+            )}
+          </div>
           <span className="text-[9px] text-zinc-500 font-mono">{timeStr}</span>
+          {active && hasLevels && (
+            <Layers size={10} className="text-blue-500/70 animate-pulse" />
+          )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {regime && (
+            <span className="text-[7px] font-bold text-zinc-500 uppercase tracking-widest border border-zinc-800/50 px-1 rounded hidden sm:inline">
+              {regime}
+            </span>
+          )}
+          {bias && (
+            <span className={cn(
+              "text-[7px] font-bold uppercase tracking-widest px-1 rounded hidden sm:inline",
+              bias === 'BULLISH' ? "text-emerald-500/70" : 
+              bias === 'BEARISH' ? "text-rose-500/70" : "text-zinc-500"
+            )}>
+              {bias}
+            </span>
+          )}
+          {hasLevels && (
+            <div className="flex gap-1.5 px-1.5 py-0.5 rounded bg-zinc-900/50 border border-zinc-800/50 hidden md:flex">
+              {obCount > 0 && (
+                <div className="flex items-center gap-0.5">
+                  <span className="text-[6px] font-bold text-zinc-600 uppercase">OB</span>
+                  <span className="text-[8px] font-bold text-zinc-400">{obCount}</span>
+                </div>
+              )}
+              {fvgCount > 0 && (
+                <div className="flex items-center gap-0.5">
+                  <span className="text-[6px] font-bold text-zinc-600 uppercase">FVG</span>
+                  <span className="text-[8px] font-bold text-zinc-400">{fvgCount}</span>
+                </div>
+              )}
+            </div>
+          )}
+          <span className="text-[8px] text-zinc-600 font-mono hidden lg:inline">{pipelineCount}/{totalStages}</span>
           {analysis?.confidence_score && (
             <span className="text-[9px] font-bold text-zinc-500">{analysis.confidence_score}%</span>
           )}
@@ -84,7 +129,34 @@ const SignalRow = ({ signal, analysis, onClick, active, variant = 'spotlight' }:
           </div>
         </div>
         
-        <div className="mt-4">
+        <div className="mt-2 flex flex-wrap gap-1">
+          {regime && (
+            <span className="text-[7px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-800/50 px-1.5 py-0.5 rounded">
+              {regime}
+            </span>
+          )}
+          {bias && (
+            <span className={cn(
+              "text-[7px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded",
+              bias === 'BULLISH' ? "text-emerald-500 bg-emerald-500/5" : 
+              bias === 'BEARISH' ? "text-rose-500 bg-rose-500/5" : "text-zinc-500 bg-zinc-800/50"
+            )}>
+              {bias}
+            </span>
+          )}
+          {obCount > 0 && (
+            <span className="text-[7px] font-bold text-zinc-400 uppercase tracking-widest bg-zinc-800/30 border border-zinc-800/50 px-1.5 py-0.5 rounded">
+              OB:{obCount}
+            </span>
+          )}
+          {fvgCount > 0 && (
+            <span className="text-[7px] font-bold text-zinc-400 uppercase tracking-widest bg-zinc-800/30 border border-zinc-800/50 px-1.5 py-0.5 rounded">
+              FVG:{fvgCount}
+            </span>
+          )}
+        </div>
+        
+        <div className="mt-3">
           <div className="flex justify-between items-center mb-1.5">
             <div className={cn(
               "text-[8px] font-bold px-1.5 py-0.5 rounded uppercase tracking-widest",
@@ -128,6 +200,20 @@ const SignalRow = ({ signal, analysis, onClick, active, variant = 'spotlight' }:
           <div className="text-right">
             <div className="text-sm font-sans text-zinc-500">{signal.created_at?.toDate ? signal.created_at.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '...'}</div>
             <div className="flex items-center justify-end gap-2 mt-1">
+              {regime && (
+                <div className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest border border-zinc-800 px-1.5 py-0.5 rounded">
+                  {regime}
+                </div>
+              )}
+              {bias && (
+                <div className={cn(
+                  "text-[8px] font-bold uppercase tracking-widest border px-1.5 py-0.5 rounded",
+                  bias === 'BULLISH' ? "border-emerald-500/20 text-emerald-500/70" : 
+                  bias === 'BEARISH' ? "border-rose-500/20 text-rose-500/70" : "border-zinc-800 text-zinc-500"
+                )}>
+                  {bias}
+                </div>
+              )}
               {analysis?.confidence_score && (
                 <div className="text-[10px] font-bold text-zinc-400 bg-zinc-800/50 px-1.5 py-0.5 rounded border border-zinc-700/50">
                   {analysis.confidence_score}%

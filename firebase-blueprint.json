@@ -20,6 +20,7 @@
       "type": "object",
       "properties": {
         "signal_id": { "type": "string", "description": "The ID of the associated signal." },
+        "status": { "type": "string", "enum": ["ANALYZING", "COMPLETE", "REJECTED"], "description": "The status of the analysis." },
         "gpt_analysis": { "type": "string", "description": "The detailed analysis text from the AI." },
         "confidence_score": { "type": "number", "description": "The AI's confidence score (0-100)." },
         "recommendation": { "type": "string", "description": "The AI's recommendation (e.g., BUY, SELL, HOLD)." },
@@ -29,11 +30,28 @@
         "feedback_context_summary": { "type": "string", "description": "Summary of historical performance context used by the evaluator." },
         "memory_alignment": { "type": "object", "description": "Detailed breakdown of how the signal aligns with historical memory." },
         "feedback_effect": { "type": "object", "description": "How historical feedback influenced the evaluation strictness." },
+        "memory_context": { "type": "object", "description": "Context retrieved from long-term memory." },
+        "manual_narrative": { "type": "string", "description": "User-provided market narrative." },
+        "manual_regime": { "type": "string", "description": "User-provided market regime." },
         "pipeline_results": { "type": "object", "description": "Full structured results from each pipeline stage." },
         "trade_plan": { "type": "object", "description": "The AI's proposed entry, stop loss, and take profit levels." },
+        "ict_levels": { "type": "object", "description": "Detected ICT levels (Order Blocks, FVGs)." },
         "created_at": { "type": "string", "format": "date-time", "description": "The timestamp when the analysis was generated." }
       },
-      "required": ["signal_id", "gpt_analysis", "confidence_score", "recommendation", "created_at"]
+      "required": ["signal_id", "status", "gpt_analysis", "confidence_score", "recommendation", "created_at"]
+    },
+    "MarketNarrative": {
+      "title": "MarketNarrative",
+      "description": "Historical record of market state evolution.",
+      "type": "object",
+      "properties": {
+        "regime": { "type": "string", "description": "The detected market regime." },
+        "htf_bias": { "type": "string", "description": "The higher timeframe bias." },
+        "smt_divergence": { "type": "boolean", "description": "Whether SMT divergence was detected." },
+        "narrative": { "type": "string", "description": "The synthesized market narrative." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When this state was recorded." }
+      },
+      "required": ["regime", "htf_bias", "timestamp"]
     },
     "User": {
       "title": "User",
@@ -97,6 +115,10 @@
     "/trades/{tradeId}": {
       "schema": "Trade",
       "description": "Collection of executed trades."
+    },
+    "/market_narrative/{narrativeId}": {
+      "schema": "MarketNarrative",
+      "description": "Historical timeline of market regimes and bias."
     }
   }
 }

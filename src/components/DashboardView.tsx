@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Activity, 
   TrendingUp, 
@@ -9,7 +9,8 @@ import {
   Filter,
   LayoutGrid,
   List as ListIcon,
-  ShieldAlert
+  ShieldAlert,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -31,6 +32,8 @@ interface DashboardViewProps {
   onDeepAudit: () => void;
   onSimulate: () => void;
   onStageClick: (stageId: string) => void;
+  isQuotaExceeded?: boolean;
+  onRetryQuota?: () => void;
 }
 
 const DashboardView = ({ 
@@ -40,14 +43,71 @@ const DashboardView = ({
   setSelectedSignal,
   onDeepAudit,
   onSimulate,
-  onStageClick
+  onStageClick,
+  isQuotaExceeded,
+  onRetryQuota
 }: DashboardViewProps) => {
+  const [regimeFilter, setRegimeFilter] = useState<string>('ALL');
+  const [biasFilter, setBiasFilter] = useState<string>('ALL');
+  const [showFilters, setShowFilters] = useState(false);
+
+  const filteredSignals = signals.filter(signal => {
+    const analysis = analyses[signal.id];
+    if (!analysis || !analysis.pipeline_results) {
+      return regimeFilter === 'ALL' && biasFilter === 'ALL';
+    }
+    
+    const regime = analysis.pipeline_results.regime?.regime;
+    const bias = analysis.pipeline_results.htf_bias?.bias;
+    
+    const matchesRegime = regimeFilter === 'ALL' || regime === regimeFilter;
+    const matchesBias = biasFilter === 'ALL' || bias === biasFilter;
+    
+    return matchesRegime && matchesBias;
+  });
+
   // Split signals into Spotlight (top 2) and Matrix (the rest)
-  const spotlightSignals = signals.slice(0, 2);
-  const matrixSignals = signals.slice(2);
+  const spotlightSignals = filteredSignals.slice(0, 2);
+  const matrixSignals = filteredSignals.slice(2);
+
+  const regimes = ['ALL', 'EXPANSION', 'CONSOLIDATION', 'RETRACEMENT', 'REVERSAL'];
+  const biases = ['ALL', 'BULLISH', 'BEARISH', 'NEUTRAL'];
 
   return (
     <div className="flex flex-col lg:grid lg:grid-cols-12 gap-6 lg:h-[calc(100vh-180px)]">
+      {isQuotaExceeded && (
+        <div className="lg:col-span-12 mb-4">
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center justify-between gap-4"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-rose-500/20 rounded-xl text-rose-500">
+                <ShieldAlert size={18} />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-rose-500 uppercase tracking-tight">Gemini API Quota Limit Reached</h3>
+                <p className="text-[10px] text-rose-200/60 font-medium">The analysis pipeline is temporarily paused to prevent API misuse. Resuming in 2 minutes.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                <span className="text-[10px] font-bold text-rose-500 uppercase tracking-widest">Paused</span>
+              </div>
+              {onRetryQuota && (
+                <button 
+                  onClick={onRetryQuota}
+                  className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 rounded-lg text-[10px] font-bold text-rose-500 uppercase tracking-widest transition-all active:scale-95"
+                >
+                  Retry Now
+                </button>
+              )}
+            </div>
+          </motion.div>
+        </div>
+      )}
       {/* Mobile: Neural Ribbon (Horizontal Scroll) */}
       <div className="lg:hidden flex flex-col gap-3">
         <div className="flex items-center justify-between px-2">
@@ -64,7 +124,7 @@ const DashboardView = ({
           </button>
         </div>
         <div className="flex gap-3 overflow-x-auto pb-4 px-2 custom-scrollbar snap-x">
-          {signals.map((signal) => (
+          {filteredSignals.map((signal) => (
             <div 
               key={signal.id}
               className="snap-center shrink-0 w-[280px]"
@@ -78,9 +138,9 @@ const DashboardView = ({
               />
             </div>
           ))}
-          {signals.length === 0 && (
+          {filteredSignals.length === 0 && (
             <div className="w-full py-8 text-center border border-dashed border-zinc-800 rounded-2xl">
-              <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">Waiting for Neural Feed...</p>
+              <p className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">No Signals Match Filter</p>
             </div>
           )}
         </div>
@@ -88,27 +148,98 @@ const DashboardView = ({
 
       {/* Desktop: Left Column (Spotlight + Matrix) */}
       <div className="hidden lg:flex lg:col-span-4 flex-col gap-6 lg:h-full overflow-hidden">
-        <div className="flex items-center justify-between px-2 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 emerald-glow animate-pulse" />
-            <h2 className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Live Signal Feed</h2>
+        <div className="flex flex-col gap-4 px-2 shrink-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 emerald-glow animate-pulse" />
+              <h2 className="text-[10px] font-bold text-zinc-400 uppercase tracking-[0.2em]">Live Signal Feed</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={onSimulate}
+                className="p-1.5 text-emerald-500 hover:text-emerald-400 transition-colors flex items-center gap-1 bg-emerald-500/10 rounded border border-emerald-500/20"
+                title="Simulate Signal"
+              >
+                <Zap size={12} />
+                <span className="text-[8px] font-bold uppercase tracking-widest">Simulate</span>
+              </button>
+              <button className="p-1.5 text-zinc-500 hover:text-zinc-300 transition-colors">
+                <Search size={14} />
+              </button>
+              <button 
+                onClick={() => setShowFilters(!showFilters)}
+                className={cn(
+                  "p-1.5 transition-colors rounded",
+                  showFilters || regimeFilter !== 'ALL' || biasFilter !== 'ALL' ? "text-emerald-500 bg-emerald-500/10" : "text-zinc-500 hover:text-zinc-300"
+                )}
+              >
+                <Filter size={14} />
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={onSimulate}
-              className="p-1.5 text-emerald-500 hover:text-emerald-400 transition-colors flex items-center gap-1 bg-emerald-500/10 rounded border border-emerald-500/20"
-              title="Simulate Signal"
-            >
-              <Zap size={12} />
-              <span className="text-[8px] font-bold uppercase tracking-widest">Simulate</span>
-            </button>
-            <button className="p-1.5 text-zinc-500 hover:text-zinc-300 transition-colors">
-              <Search size={14} />
-            </button>
-            <button className="p-1.5 text-zinc-500 hover:text-zinc-300 transition-colors">
-              <Filter size={14} />
-            </button>
-          </div>
+
+          <AnimatePresence>
+            {showFilters && (
+              <motion.div 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="p-3 bg-zinc-900/50 border border-zinc-800 rounded-xl space-y-3">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest">Market Regime</span>
+                      {(regimeFilter !== 'ALL' || biasFilter !== 'ALL') && (
+                        <button 
+                          onClick={() => { setRegimeFilter('ALL'); setBiasFilter('ALL'); }}
+                          className="text-[8px] font-bold text-rose-500 uppercase tracking-widest hover:text-rose-400"
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {regimes.map(r => (
+                        <button
+                          key={r}
+                          onClick={() => setRegimeFilter(r)}
+                          className={cn(
+                            "px-2.5 py-1.5 rounded-lg text-[7px] font-bold uppercase tracking-widest transition-all border",
+                            regimeFilter === r 
+                              ? "bg-emerald-500 text-zinc-950 border-emerald-400 shadow-lg shadow-emerald-500/20 scale-105" 
+                              : "bg-zinc-900/50 border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700"
+                          )}
+                        >
+                          {r}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest">HTF Bias</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {biases.map(b => (
+                        <button
+                          key={b}
+                          onClick={() => setBiasFilter(b)}
+                          className={cn(
+                            "px-2.5 py-1.5 rounded-lg text-[7px] font-bold uppercase tracking-widest transition-all border",
+                            biasFilter === b 
+                              ? "bg-blue-500 text-zinc-950 border-blue-400 shadow-lg shadow-blue-500/20 scale-105" 
+                              : "bg-zinc-900/50 border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700"
+                          )}
+                        >
+                          {b}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         <div className="flex-1 overflow-y-auto pr-2 space-y-6 custom-scrollbar">
@@ -158,18 +289,29 @@ const DashboardView = ({
             </div>
           )}
           
-          {signals.length === 0 && (
+          {filteredSignals.length === 0 && (
             <div className="flex flex-col items-center justify-center h-96 text-center">
               <div className="w-16 h-16 bg-zinc-900/50 rounded-2xl flex items-center justify-center mb-6 border border-zinc-800/50 opacity-20">
                 <Activity size={32} className="text-zinc-500" />
               </div>
-              <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-6 opacity-40">Waiting for market liquidity...</p>
-              <button 
-                onClick={onSimulate}
-                className="px-6 py-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-500 text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-emerald-500/20 transition-all active:scale-95 emerald-glow"
-              >
-                Initialize Neural Feed
-              </button>
+              <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-6 opacity-40">
+                {regimeFilter !== 'ALL' || biasFilter !== 'ALL' ? 'No signals match your neural filters' : 'Waiting for market liquidity...'}
+              </p>
+              {(regimeFilter !== 'ALL' || biasFilter !== 'ALL') ? (
+                <button 
+                  onClick={() => { setRegimeFilter('ALL'); setBiasFilter('ALL'); }}
+                  className="px-6 py-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-500 text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-rose-500/20 transition-all active:scale-95"
+                >
+                  Clear Filters
+                </button>
+              ) : (
+                <button 
+                  onClick={onSimulate}
+                  className="px-6 py-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-500 text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-emerald-500/20 transition-all active:scale-95 emerald-glow"
+                >
+                  Initialize Neural Feed
+                </button>
+              )}
             </div>
           )}
         </div>

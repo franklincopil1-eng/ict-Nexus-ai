@@ -1,51 +1,69 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: signals
+// Document ID: auto-generated
+// Fields:
+//   - symbol: string (required)
+//   - timeframe: string (required)
+//   - signal_type: string (required)
+//   - confidence: number (required)
+//   - created_at: timestamp (required)
+//
+// Collection: analyses
+// Document ID: auto-generated
+// Fields:
+//   - signal_id: string (required)
+//   - status: string (required, enum: ANALYZING, COMPLETE, REJECTED)
+//   - gpt_analysis: string (required)
+//   - confidence_score: number (required)
+//   - recommendation: string (required)
+//   - created_at: timestamp (required)
+//
+// Collection: users
+// Document ID: uid
+// Fields:
+//   - uid: string (required)
+//   - email: string (required)
+//   - role: string (required, enum: admin, user)
+//   - created_at: timestamp (required)
+//
+// Collection: settings
+// Document ID: userId (uid)
+// Fields:
+//   - is_kill_switch_active: bool (required)
+//   - auto_trade_enabled: bool (required)
+//   - min_confidence_threshold: number (required)
+//   - max_risk_per_trade_pct: number (required)
+//
+// Collection: trades
+// Document ID: auto-generated
+// Fields:
+//   - signal_id: string (required)
+//   - analysis_id: string (required)
+//   - type: string (required, enum: BUY, SELL)
+//   - status: string (required)
+//   - entry_price: number (required)
+//   - executed_at: timestamp (required)
+//
+// Collection: market_narrative
+// Document ID: auto-generated
+// Fields:
+//   - regime: string (required)
+//   - htf_bias: string (required)
+//   - timestamp: timestamp (required)
+//
+// ===============================================================
+
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: signals
-    // Document ID: auto-generated
-    // Fields:
-    //   - symbol: string (required)
-    //   - timeframe: string (required)
-    //   - signal_type: string (required)
-    //   - confidence: number (required)
-    //   - raw_data: map (optional)
-    //   - created_at: timestamp (required)
-    //
-    // Collection: analyses
-    // Document ID: auto-generated
-    // Fields:
-    //   - signal_id: string (required)
-    //   - gpt_analysis: string (required)
-    //   - confidence_score: number (required)
-    //   - recommendation: string (required)
-    //   - policy_decision: string (optional)
-    //   - policy_commentary: string (optional)
-    //   - memory_references: list (optional)
-    //   - feedback_context_summary: string (optional)
-    //   - memory_alignment: map (optional)
-    //   - feedback_effect: map (optional)
-    //   - pipeline_results: map (optional)
-    //   - trade_plan: map (optional)
-    //   - created_at: timestamp (required)
-    //
-    // Collection: users
-    // Document ID: uid
-    // Fields:
-    //   - uid: string (required)
-    //   - email: string (required)
-    //   - role: string (required, enum: admin, user)
-    //   - created_at: timestamp (required)
-    //
-    // ===============================================================
 
     // ===============================================================
     // Helper Functions
     // ===============================================================
-    
+
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -56,45 +74,47 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (
-          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
-          (request.auth.token.email == "franklincopil1@gmail.com" && request.auth.token.email_verified == true)
-        );
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "franklincopil1@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
     }
 
     function isValidEmail(email) {
       return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
 
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
     function isValidSignal(data) {
-      return data.keys().hasAll(['symbol', 'timeframe', 'signal_type', 'confidence', 'created_at']) &&
+      return hasRequiredFields(['symbol', 'timeframe', 'signal_type', 'confidence', 'created_at']) &&
              data.symbol is string && data.symbol.size() > 0 && data.symbol.size() < 20 &&
-             data.timeframe is string && data.timeframe.size() > 0 && data.timeframe.size() < 10 &&
-             data.signal_type is string && data.signal_type.size() > 0 && data.signal_type.size() < 50 &&
+             data.timeframe is string &&
+             data.signal_type is string &&
              data.confidence is number && data.confidence >= 0 && data.confidence <= 100 &&
              data.created_at is timestamp;
     }
 
     function isValidAnalysis(data) {
-      return data.keys().hasAll(['signal_id', 'status', 'created_at']) &&
+      return hasRequiredFields(['signal_id', 'status', 'gpt_analysis', 'confidence_score', 'recommendation', 'created_at']) &&
              data.signal_id is string &&
              data.status in ['ANALYZING', 'COMPLETE', 'REJECTED'] &&
-             data.created_at is timestamp &&
-             (!('gpt_analysis' in data) || (data.gpt_analysis is string && data.gpt_analysis.size() < 10000)) &&
-             (!('confidence_score' in data) || (data.confidence_score is number && data.confidence_score >= 0 && data.confidence_score <= 100)) &&
-             (!('recommendation' in data) || (data.recommendation is string && data.recommendation.size() < 20)) &&
-             (!('policy_decision' in data) || data.policy_decision is string) &&
-             (!('policy_commentary' in data) || data.policy_commentary is string) &&
-             (!('memory_references' in data) || data.memory_references is list) &&
-             (!('feedback_context_summary' in data) || data.feedback_context_summary is string) &&
-             (!('memory_alignment' in data) || data.memory_alignment is map) &&
-             (!('feedback_effect' in data) || data.feedback_effect is map) &&
-             (!('pipeline_results' in data) || data.pipeline_results is map) &&
-             (!('trade_plan' in data) || data.trade_plan is map);
+             data.gpt_analysis is string && data.gpt_analysis.size() < 10000 &&
+             data.confidence_score is number &&
+             data.recommendation is string &&
+             data.created_at is timestamp;
     }
 
     function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'email', 'role', 'created_at']) &&
+      return hasRequiredFields(['uid', 'email', 'role', 'created_at']) &&
              data.uid == request.auth.uid &&
              isValidEmail(data.email) &&
              data.role in ['admin', 'user'] &&
@@ -102,57 +122,72 @@ service cloud.firestore {
     }
 
     function isValidSettings(data) {
-      return data.keys().hasAll(['is_kill_switch_active', 'auto_trade_enabled', 'min_confidence_threshold', 'max_risk_per_trade_pct']) &&
+      return hasRequiredFields(['is_kill_switch_active', 'auto_trade_enabled', 'min_confidence_threshold', 'max_risk_per_trade_pct', 'daily_loss_limit_usd']) &&
              data.is_kill_switch_active is bool &&
              data.auto_trade_enabled is bool &&
-             data.min_confidence_threshold is number && data.min_confidence_threshold >= 0 && data.min_confidence_threshold <= 100 &&
-             data.max_risk_per_trade_pct is number && data.max_risk_per_trade_pct >= 0 && data.max_risk_per_trade_pct <= 10;
+             data.min_confidence_threshold is number &&
+             data.max_risk_per_trade_pct is number &&
+             data.daily_loss_limit_usd is number;
     }
 
     function isValidTrade(data) {
-      return data.keys().hasAll(['signal_id', 'analysis_id', 'type', 'status', 'entry_price', 'executed_at']) &&
+      return hasRequiredFields(['signal_id', 'analysis_id', 'type', 'status', 'entry_price', 'executed_at']) &&
              data.signal_id is string &&
              data.analysis_id is string &&
              data.type in ['BUY', 'SELL'] &&
-             data.status in ['OPEN', 'CLOSED', 'CANCELLED'] &&
+             data.status is string &&
              data.entry_price is number &&
              data.executed_at is timestamp;
     }
 
+    function isValidMarketNarrative(data) {
+      return hasRequiredFields(['regime', 'htf_bias', 'timestamp']) &&
+             data.regime is string &&
+             data.htf_bias is string &&
+             data.timestamp is timestamp;
+    }
+
     // ===============================================================
-    // Rules
+    // Match Rules
     // ===============================================================
+
+    match /signals/{signalId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin() && isValidSignal(request.resource.data);
+    }
+
+    match /analyses/{analysisId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin() && isValidAnalysis(request.resource.data);
+    }
 
     match /users/{userId} {
       allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
-      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (request.resource.data.role == 'user' || isAdmin());
-      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
+                    (request.resource.data.role == 'user' || isAdmin());
+      allow update: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
+                    (request.resource.data.role == resource.data.role || isAdmin());
       allow delete: if isAdmin();
     }
 
     match /settings/{settingId} {
       allow read: if isAuthenticated();
-      allow write: if isAdmin() && (settingId == 'trading_config' || isOwner(settingId));
+      allow write: if (isOwner(settingId) || isAdmin()) && isValidSettings(request.resource.data);
     }
 
     match /trades/{tradeId} {
       allow read: if isAuthenticated();
-      allow create: if isAdmin(); // Only system/admin can create trades
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
+      allow create, update, delete: if isAdmin() && isValidTrade(request.resource.data);
     }
 
-    match /signals/{signalId} {
+    match /market_narrative/{narrativeId} {
       allow read: if isAuthenticated();
-      allow create: if isValidSignal(request.resource.data); // Allow webhooks (unauthenticated) to post valid signals
-      allow update, delete: if isAdmin();
+      allow create, update, delete: if isAdmin() && isValidMarketNarrative(request.resource.data);
     }
 
-    match /analyses/{analysisId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidAnalysis(request.resource.data);
-      allow update: if isAuthenticated() && (isAdmin() || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'gpt_analysis', 'confidence_score', 'recommendation', 'policy_decision', 'policy_commentary', 'memory_references', 'feedback_context_summary', 'memory_alignment', 'feedback_effect', 'pipeline_results', 'trade_plan', 'updated_at'])));
-      allow delete: if isAdmin();
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

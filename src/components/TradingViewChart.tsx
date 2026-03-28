@@ -8,12 +8,19 @@ interface TradingViewChartProps {
 
 const TradingViewChart = ({ symbol, interval, studies = [] }: TradingViewChartProps) => {
   const container = useRef<HTMLDivElement>(null);
+  const containerId = useRef(`tradingview_${Math.random().toString(36).substr(2, 9)}`);
 
   useEffect(() => {
     if (!container.current) return;
 
     const containerRef = container.current;
-    containerRef.innerHTML = '';
+    
+    // Find the widget div
+    const widgetDiv = document.getElementById(containerId.current);
+    if (!widgetDiv) return;
+
+    // Clear previous widget content but keep the div
+    widgetDiv.innerHTML = '';
 
     const script = document.createElement("script");
     script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
@@ -37,22 +44,22 @@ const TradingViewChart = ({ symbol, interval, studies = [] }: TradingViewChartPr
       "hide_top_toolbar": false,
       "hide_legend": false,
       "save_image": false,
-      "container_id": "tradingview_chart_container",
+      "container_id": containerId.current,
       "studies": studies
     });
 
-    containerRef.appendChild(script);
+    widgetDiv.appendChild(script);
 
     return () => {
-      if (containerRef) {
-        containerRef.innerHTML = '';
+      if (widgetDiv) {
+        widgetDiv.innerHTML = '';
       }
     };
   }, [symbol, interval, studies]);
 
   return (
     <div className="tradingview-widget-container w-full h-full" ref={container}>
-      <div id="tradingview_chart_container" className="w-full h-full" />
+      <div id={containerId.current} className="w-full h-full" />
     </div>
   );
 };

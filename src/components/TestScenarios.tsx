@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Play, Zap, Clock, AlertCircle, Shield, CheckCircle2, TrendingUp } from 'lucide-react';
+import { Play, Zap, Clock, AlertCircle, Shield, CheckCircle2, TrendingUp, Activity, Server, Database, Cpu } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { db } from '../firebase';
-import { collection, query, where, getDocs, updateDoc, doc, limit, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, updateDoc, doc, limit, orderBy, getDoc } from 'firebase/firestore';
+import { testSystemHealth } from '../services/geminiService';
 
 const TEST_SCENARIOS = [
   {
@@ -68,8 +69,53 @@ const TEST_SCENARIOS = [
 const TestScenarios = () => {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [isSimulatingOutcome, setIsSimulatingOutcome] = useState(false);
+  const [isCheckingHealth, setIsCheckingHealth] = useState(false);
+  const [isRunningAll, setIsRunningAll] = useState(false);
   const [bypassKillzone, setBypassKillzone] = useState(false);
   const [status, setStatus] = useState<{ id: string, type: 'success' | 'error', message: string } | null>(null);
+  const [healthStatus, setHealthStatus] = useState<{
+    api: 'ok' | 'error' | 'pending',
+    firebase: 'ok' | 'error' | 'pending',
+    neural: 'ok' | 'error' | 'pending'
+  }>({ api: 'pending', firebase: 'pending', neural: 'pending' });
+
+  const checkHealth = async () => {
+    setIsCheckingHealth(true);
+    setHealthStatus({ api: 'pending', firebase: 'pending', neural: 'pending' });
+
+    try {
+      // 1. API Health
+      const apiRes = await fetch('/api/health');
+      const apiOk = apiRes.ok;
+      setHealthStatus(prev => ({ ...prev, api: apiOk ? 'ok' : 'error' }));
+
+      // 2. Firebase Health
+      try {
+        const testDoc = await getDoc(doc(db, 'settings', 'trading_config'));
+        setHealthStatus(prev => ({ ...prev, firebase: testDoc.exists() ? 'ok' : 'error' }));
+      } catch (e) {
+        setHealthStatus(prev => ({ ...prev, firebase: 'error' }));
+      }
+
+      // 3. Neural Health (Gemini)
+      const neuralOk = await testSystemHealth();
+      setHealthStatus(prev => ({ ...prev, neural: neuralOk ? 'ok' : 'error' }));
+
+    } catch (error) {
+      console.error('Health check failed:', error);
+    } finally {
+      setIsCheckingHealth(false);
+    }
+  };
+
+  const runAllTests = async () => {
+    setIsRunningAll(true);
+    for (const scenario of TEST_SCENARIOS) {
+      await triggerTest(scenario);
+      await new Promise(r => setTimeout(r, 1000)); // Gap between injections
+    }
+    setIsRunningAll(false);
+  };
 
   const triggerTest = async (scenario: typeof TEST_SCENARIOS[0]) => {
     setLoadingId(scenario.id);
@@ -168,6 +214,65 @@ const TestScenarios = () => {
             <TrendingUp size={14} />
           )}
           Simulate Outcome
+        </button>
+
+        <button 
+          onClick={runAllTests}
+          disabled={isRunningAll}
+          className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-blue-500/20 bg-blue-500/5 text-[10px] font-bold uppercase tracking-widest text-blue-400 hover:text-blue-300 hover:border-blue-500/40 transition-all active:scale-95 disabled:opacity-30"
+        >
+          {isRunningAll ? (
+            <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Activity size={14} />
+          )}
+          Run All Scenarios
+        </button>
+      </div>
+
+      {/* Health Check Section */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+        {[
+          { id: 'api', label: 'Backend API', icon: Server, status: healthStatus.api },
+          { id: 'firebase', label: 'Firestore DB', icon: Database, status: healthStatus.firebase },
+          { id: 'neural', label: 'Neural Engine', icon: Cpu, status: healthStatus.neural },
+        ].map((h) => (
+          <div key={h.id} className="p-4 rounded-xl bg-zinc-900/40 border border-zinc-800/50 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={cn(
+                "p-2 rounded-lg border",
+                h.status === 'ok' ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500" :
+                h.status === 'error' ? "bg-rose-500/10 border-rose-500/20 text-rose-500" :
+                "bg-zinc-800 border-zinc-700 text-zinc-500"
+              )}>
+                <h.icon size={14} />
+              </div>
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{h.label}</span>
+            </div>
+            <div className={cn(
+              "text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 rounded",
+              h.status === 'ok' ? "bg-emerald-500/10 text-emerald-500" :
+              h.status === 'error' ? "bg-rose-500/10 text-rose-500" :
+              "bg-zinc-800 text-zinc-500"
+            )}>
+              {h.status === 'pending' ? 'Checking...' : h.status.toUpperCase()}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex justify-center mb-8">
+        <button 
+          onClick={checkHealth}
+          disabled={isCheckingHealth}
+          className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest hover:text-zinc-300 flex items-center gap-2 transition-colors disabled:opacity-30"
+        >
+          {isCheckingHealth ? (
+            <div className="w-2 h-2 border border-zinc-500 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Activity size={10} />
+          )}
+          Refresh System Health
         </button>
       </div>
 

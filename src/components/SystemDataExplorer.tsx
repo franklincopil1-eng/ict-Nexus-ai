@@ -97,14 +97,16 @@ const SystemDataExplorer = ({ users, trades, signals, analyses }: SystemDataExpl
       // We only want to auto-select the first item if:
       // 1. There is no current selection
       // 2. The current selection is no longer in the data (e.g. deleted or collection changed)
+      // BUT we should avoid overwriting if selectedId was just set by navigateToRecord
       if (!selectedId || !currentExists) {
+        // Only auto-select if we don't have a valid selection
         const firstItem = data[0] as any;
         setSelectedId(firstItem.uid || firstItem.id);
       }
     } else {
       setSelectedId(null);
     }
-  }, [activeCollection, data, selectedId]);
+  }, [activeCollection, data]); // Removed selectedId from dependencies to avoid infinite loops or premature overwrites
 
   const navigateToRecord = (collection: CollectionType, id: string) => {
     setActiveCollection(collection);
@@ -597,7 +599,7 @@ const SystemDataExplorer = ({ users, trades, signals, analyses }: SystemDataExpl
                       />
                     ) : (
                       <div className={activeColors.text}>
-                        {React.cloneElement(getRecordIcon(selectedRecord) as React.ReactElement, { size: 32 })}
+                        {React.cloneElement(getRecordIcon(selectedRecord) as React.ReactElement<any>, { size: 32 })}
                       </div>
                     )}
                   </div>
@@ -683,6 +685,23 @@ const SystemDataExplorer = ({ users, trades, signals, analyses }: SystemDataExpl
                           Related Records
                         </h4>
                         <div className="flex flex-wrap gap-3">
+                          {activeCollection === 'users' && (
+                            <>
+                              {trades.filter(t => (t as any).uid === (selectedRecord as any).uid || (t as any).userId === (selectedRecord as any).uid).map(t => (
+                                <button 
+                                  key={t.id}
+                                  onClick={() => navigateToRecord('trades', t.id)}
+                                  className="flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-500 hover:bg-emerald-500/20 transition-all text-[10px] font-bold uppercase tracking-widest"
+                                >
+                                  <TrendingUp size={12} />
+                                  View Trade {t.id.slice(0, 4)}
+                                </button>
+                              ))}
+                              {trades.filter(t => (t as any).uid === (selectedRecord as any).uid || (t as any).userId === (selectedRecord as any).uid).length === 0 && (
+                                <span className="text-[10px] text-zinc-600 italic font-medium">No trades found for this user</span>
+                              )}
+                            </>
+                          )}
                           {activeCollection === 'signals' && (
                             <>
                               {analyses.find(a => (a as any).signal_id === (selectedRecord as any).id || (a as any).signalId === (selectedRecord as any).id) && (
@@ -731,6 +750,15 @@ const SystemDataExplorer = ({ users, trades, signals, analyses }: SystemDataExpl
                           )}
                           {activeCollection === 'trades' && (
                             <>
+                              {((selectedRecord as any).uid || (selectedRecord as any).userId) && (
+                                <button 
+                                  onClick={() => navigateToRecord('users', (selectedRecord as any).uid || (selectedRecord as any).userId)}
+                                  className="flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-500 hover:bg-blue-500/20 transition-all text-[10px] font-bold uppercase tracking-widest"
+                                >
+                                  <Users size={12} />
+                                  View User
+                                </button>
+                              )}
                               {signals.find(s => s.id === (selectedRecord as any).signal_id || s.id === (selectedRecord as any).signalId) && (
                                 <button 
                                   onClick={() => navigateToRecord('signals', (selectedRecord as any).signal_id || (selectedRecord as any).signalId)}

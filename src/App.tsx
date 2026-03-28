@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   onAuthStateChanged, 
   signInWithPopup, 
@@ -10,6 +10,8 @@ import {
   collection, 
   onSnapshot, 
   query, 
+  where,
+  getDocs,
   orderBy, 
   limit, 
   addDoc, 
@@ -19,7 +21,7 @@ import {
   getDoc,
   updateDoc
 } from 'firebase/firestore';
-import { auth, db } from './firebase';
+import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { analyzeSignal } from './services/geminiService';
 import { 
   PanelLeft,
@@ -91,10 +93,27 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [signals, setSignals] = useState<Signal[]>([]);
+  const [allAnalyses, setAllAnalyses] = useState<Analysis[]>([]);
   const [analyses, setAnalyses] = useState<Record<string, Analysis>>({});
+
+  // Derive latest analyses record whenever allAnalyses changes
+  useEffect(() => {
+    const latest: Record<string, Analysis> = {};
+    // allAnalyses is ordered by created_at desc from Firestore
+    allAnalyses.forEach(analysis => {
+      if (!latest[analysis.signal_id]) {
+        latest[analysis.signal_id] = analysis;
+      }
+    });
+    setAnalyses(latest);
+  }, [allAnalyses]);
   const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null);
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isAnalysesLoaded, setIsAnalysesLoaded] = useState(false);
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
+  const processingSignalIds = useRef<Set<string>>(new Set());
+  const isOrchestratorRunning = useRef(false);
   const [view, setView] = useState<'dashboard' | 'backtest' | 'settings' | 'trades' | 'users' | 'audit' | 'deep_audit' | 'test_suite'>('dashboard');
   const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
   const [isBacktesting, setIsBacktesting] = useState(false);
@@ -110,6 +129,8 @@ export default function App() {
   });
   const [trades, setTrades] = useState<Trade[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [manualNarrative, setManualNarrative] = useState<string>('');
+  const [manualRegime, setManualRegime] = useState<string>('');
 
   const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
 
@@ -156,41 +177,45 @@ export default function App() {
       setLoading(false);
 
       if (currentUser) {
-        // Ensure user document exists
-        const userRef = doc(db, 'users', currentUser.uid);
-        const userDoc = await getDoc(userRef);
-        
-        // Check if user is the admin from prompt
-        const isAdmin = currentUser.email === 'franklincopil1@gmail.com';
-        
-        if (!userDoc.exists()) {
-          await setDoc(userRef, {
-            uid: currentUser.uid,
-            email: currentUser.email,
-            displayName: currentUser.displayName,
-            photoURL: currentUser.photoURL,
-            role: isAdmin ? 'admin' : 'user',
-            created_at: serverTimestamp(),
-            lastLogin: serverTimestamp()
-          });
-        } else {
-          await updateDoc(userRef, {
-            displayName: currentUser.displayName,
-            photoURL: currentUser.photoURL,
-            lastLogin: serverTimestamp(),
-            // Ensure admin role if email matches
-            ...(isAdmin && { role: 'admin' })
-          });
-        }
+        try {
+          // Ensure user document exists
+          const userRef = doc(db, 'users', currentUser.uid);
+          const userDoc = await getDoc(userRef);
+          
+          // Check if user is the admin from prompt
+          const isAdmin = currentUser.email === 'franklincopil1@gmail.com';
+          
+          if (!userDoc.exists()) {
+            await setDoc(userRef, {
+              uid: currentUser.uid,
+              email: currentUser.email,
+              displayName: currentUser.displayName,
+              photoURL: currentUser.photoURL,
+              role: isAdmin ? 'admin' : 'user',
+              created_at: serverTimestamp(),
+              lastLogin: serverTimestamp()
+            });
+          } else {
+            await updateDoc(userRef, {
+              displayName: currentUser.displayName,
+              photoURL: currentUser.photoURL,
+              lastLogin: serverTimestamp(),
+              // Ensure admin role if email matches
+              ...(isAdmin && { role: 'admin' })
+            });
+          }
 
-        // Load settings
-        const settingsRef = doc(db, 'settings', 'trading_config');
-        const settingsDoc = await getDoc(settingsRef);
-        if (settingsDoc.exists()) {
-          setSettings(settingsDoc.data() as TradingSettings);
-        } else if (isAdmin) {
-          // Only admin can initialize global settings
-          await setDoc(settingsRef, settings);
+          // Load settings
+          const settingsRef = doc(db, 'settings', 'trading_config');
+          const settingsDoc = await getDoc(settingsRef);
+          if (settingsDoc.exists()) {
+            setSettings(settingsDoc.data() as TradingSettings);
+          } else if (isAdmin) {
+            // Only admin can initialize global settings
+            await setDoc(settingsRef, settings);
+          }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, 'users/settings');
         }
       }
     });
@@ -257,34 +282,31 @@ export default function App() {
       if (newSignals.length > 0 && !selectedSignalId) {
         setSelectedSignalId(newSignals[0].id);
       }
-    });
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'signals'));
 
     const analysesQuery = query(collection(db, 'analyses'), orderBy('created_at', 'desc'), limit(100));
     const unsubscribeAnalyses = onSnapshot(analysesQuery, (snapshot) => {
-      const newAnalyses: Record<string, Analysis> = {};
-      snapshot.docs.forEach(doc => {
-        const data = doc.data() as Analysis;
-        newAnalyses[data.signal_id] = { id: doc.id, ...data };
-      });
-      setAnalyses(newAnalyses);
-    });
+      const newAnalyses: Analysis[] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Analysis));
+      setAllAnalyses(newAnalyses);
+      setIsAnalysesLoaded(true);
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'analyses'));
 
     const tradesQuery = query(collection(db, 'trades'), orderBy('executed_at', 'desc'), limit(50));
     const unsubscribeTrades = onSnapshot(tradesQuery, (snapshot) => {
       const newTrades = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Trade));
       setTrades(newTrades);
-    });
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'trades'));
 
     const settingsUnsubscribe = onSnapshot(doc(db, 'settings', 'trading_config'), (doc) => {
       if (doc.exists()) {
         setSettings(doc.data() as TradingSettings);
       }
-    });
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'settings/trading_config'));
 
     const usersUnsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
       const usersData = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() } as User));
       setAllUsers(usersData);
-    });
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'users'));
 
     return () => {
       unsubscribeSignals();
@@ -298,11 +320,54 @@ export default function App() {
   // --- AI Analysis Trigger ---
   useEffect(() => {
     const processNewSignals = async () => {
-      if (!isAuthReady || !user) return;
+      // CRITICAL: Wait for both auth and initial analyses load to prevent re-processing
+      if (!isAuthReady || !user || !isAnalysesLoaded || isQuotaExceeded) return;
+      
+      // Concurrency lock
+      if (isOrchestratorRunning.current) return;
+      isOrchestratorRunning.current = true;
 
-      for (const signal of signals) {
-        // Only analyze signals that don't have an analysis yet
-        if (!analyses[signal.id]) {
+      try {
+        // Filter signals: 
+        // 1. No analysis yet in local state
+        // 2. Not currently being processed in this session
+        // 3. Created in the last 1 hour (to avoid massive historical analysis on restart)
+        const oneHourAgo = Date.now() - (60 * 60 * 1000);
+        
+        const signalsToProcess = signals.filter(signal => {
+          const signalTime = signal.created_at?.toMillis ? signal.created_at.toMillis() : 
+                            (signal.timestamp ? new Date(signal.timestamp).getTime() : Date.now());
+          
+          return !analyses[signal.id] && 
+                 !processingSignalIds.current.has(signal.id) &&
+                 signalTime > oneHourAgo;
+        });
+
+        if (signalsToProcess.length === 0) return;
+
+        // Process signals sequentially with a throttle delay
+        for (const signal of signalsToProcess) {
+          // Double-check if we hit quota in a previous iteration of this loop
+          if (isQuotaExceeded) break;
+
+          // Double-check Firestore directly to be absolutely sure we don't re-process
+          try {
+            const existingAnalysesQuery = query(
+              collection(db, 'analyses'), 
+              where('signal_id', '==', signal.id),
+              limit(1)
+            );
+            const existingSnapshot = await getDocs(existingAnalysesQuery);
+            
+            if (!existingSnapshot.empty) {
+              console.log(`[ORCHESTRATOR] Analysis already exists for signal ${signal.id}. Skipping.`);
+              continue;
+            }
+          } catch (e) {
+            handleFirestoreError(e, OperationType.GET, 'analyses');
+          }
+
+          processingSignalIds.current.add(signal.id);
           console.log(`[ORCHESTRATOR] Initializing analysis for signal: ${signal.id}`);
           
           try {
@@ -311,17 +376,20 @@ export default function App() {
               signal_id: signal.id,
               symbol: signal.symbol,
               status: 'ANALYZING',
+              manual_narrative: manualNarrative || null,
+              manual_regime: manualRegime || null,
               pipeline_results: {},
               created_at: serverTimestamp()
-            });
+            }).catch(e => handleFirestoreError(e, OperationType.CREATE, 'analyses'));
+
+            if (!analysisRef) continue;
 
             // 2. Run analysis with incremental updates
             const result = await analyzeSignal(signal, async (stage, res) => {
-              console.log(`[PIPELINE] Stage ${stage} complete for ${signal.symbol}`);
               await updateDoc(analysisRef, {
                 [`pipeline_results.${stage}`]: res
-              });
-            });
+              }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `analyses/${analysisRef.id}`));
+            }, manualNarrative, manualRegime);
             
             // 3. Finalize analysis document
             if (result.valid && result.gpt_analysis && result.confidence_score !== undefined && result.recommendation) {
@@ -340,28 +408,16 @@ export default function App() {
                 pipeline_results: result.pipeline_results || null,
                 trade_plan: result.trade_plan || null,
                 updated_at: serverTimestamp()
-              });
+              }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `analyses/${analysisRef.id}`));
 
-              // Trigger Telegram Alert for AI Analysis
-              let ictSummary = '';
-              if (result.ict_levels) {
-                const obCount = result.ict_levels.order_blocks?.length || 0;
-                const fvgCount = result.ict_levels.fair_value_gaps?.length || 0;
-                if (obCount > 0 || fvgCount > 0) {
-                  ictSummary = `\n<b>ICT Levels Identified:</b>\n` +
-                               `🧱 Order Blocks: ${obCount}\n` +
-                               `🕳 Fair Value Gaps: ${fvgCount}\n`;
-                }
-              }
-
+              // Trigger Telegram Alert
               const alertMsg = `🤖 <b>AI ANALYSIS COMPLETE</b>\n\n` +
                                `📈 <b>Symbol:</b> ${signal.symbol}\n` +
-                               `🎯 <b>Recommendation:</b> ${result.recommendation === 'BUY' ? '🟢 BUY' : result.recommendation === 'SELL' ? '🔴 SELL' : '⚪️ HOLD'}\n` +
+                               `🎯 <b>Recommendation:</b> ${result.recommendation}\n` +
                                `📊 <b>Confidence:</b> ${result.confidence_score}%\n\n` +
                                `💰 <b>Entry:</b> ${result.trade_plan?.entry || 'Market'}\n` +
                                `🛑 <b>SL:</b> ${result.trade_plan?.stop_loss || 'N/A'}\n` +
                                `🎯 <b>TP:</b> ${result.trade_plan?.take_profit || 'N/A'}\n` +
-                               ictSummary +
                                `\n<i>Check the dashboard for full details.</i>`;
               
               fetch('/api/telegram/alert', {
@@ -370,11 +426,9 @@ export default function App() {
                 body: JSON.stringify({ message: alertMsg })
               }).catch(e => console.error("Telegram alert failed:", e));
 
-              // --- Automation Logic ---
-              if (settings && settings.auto_trade_enabled && !settings.is_kill_switch_active) {
+              // Automation Logic
+              if (settings?.auto_trade_enabled && !settings?.is_kill_switch_active) {
                 if (result.confidence_score >= settings.min_confidence_threshold && (result.recommendation === 'BUY' || result.recommendation === 'SELL')) {
-                  console.log(`Executing automated trade for ${signal.symbol}`);
-                  
                   await addDoc(collection(db, 'trades'), {
                     signal_id: signal.id,
                     analysis_id: analysisRef.id,
@@ -382,52 +436,46 @@ export default function App() {
                     status: 'OPEN',
                     entry_price: Number(signal.raw_data?.price) || 1.1000,
                     executed_at: serverTimestamp()
-                  });
-
-                  let execIctSummary = '';
-                  if (result.ict_levels) {
-                    const obCount = result.ict_levels.order_blocks?.length || 0;
-                    const fvgCount = result.ict_levels.fair_value_gaps?.length || 0;
-                    if (obCount > 0 || fvgCount > 0) {
-                      execIctSummary = `🧱 OB: ${obCount} | 🕳 FVG: ${fvgCount}\n`;
-                    }
-                  }
-
-                  const execMsg = `⚡️ <b>AUTOMATED TRADE EXECUTED</b>\n\n` +
-                                  `📈 <b>Symbol:</b> ${signal.symbol}\n` +
-                                  `🎯 <b>Action:</b> ${result.recommendation}\n` +
-                                  `💰 <b>Entry:</b> ${signal.raw_data?.price || 'Market'}\n` +
-                                  `🛑 <b>SL:</b> ${result.trade_plan?.stop_loss || 'N/A'}\n` +
-                                  `🎯 <b>TP:</b> ${result.trade_plan?.take_profit || 'N/A'}\n` +
-                                  `🛡 <b>Risk:</b> ${settings.max_risk_per_trade_pct}%\n` +
-                                  execIctSummary +
-                                  `\n<i>Safety guards active.</i>`;
-                  
-                  fetch('/api/telegram/alert', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: execMsg })
-                  }).catch(e => console.error("Telegram execution alert failed:", e));
+                  }).catch(e => handleFirestoreError(e, OperationType.CREATE, 'trades'));
                 }
               }
             } else {
-              // Handle rejection or error
               await updateDoc(analysisRef, {
                 status: 'REJECTED',
                 errors: result.errors || ['Unknown analysis failure'],
                 pipeline_results: result.pipeline_results || null,
                 updated_at: serverTimestamp()
-              });
+              }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `analyses/${analysisRef.id}`));
             }
-          } catch (error) {
+          } catch (error: any) {
             console.error(`[ORCHESTRATOR] Analysis failed for ${signal.id}:`, error);
+            
+            // Check for Quota Error
+            if (error?.message?.includes('quota') || error?.message?.includes('429')) {
+              console.error("[ORCHESTRATOR] Quota exceeded. Pausing analysis pipeline.");
+              setIsQuotaExceeded(true);
+              // Reset quota flag after 2 minutes
+              setTimeout(() => setIsQuotaExceeded(false), 120000);
+              break; 
+            }
+
+            // If it's a Firestore error that was already handled/thrown by handleFirestoreError,
+            // we might want to let it bubble up to ErrorBoundary if it's critical,
+            // but here we are in a loop, so we might just log it and continue.
+            // However, the spec says "throw a new error", so it will bubble up.
+            throw error;
           }
+
+          // Throttle delay between signals (3 seconds) to stay within RPM limits
+          await new Promise(resolve => setTimeout(resolve, 3000));
         }
+      } finally {
+        isOrchestratorRunning.current = false;
       }
     };
 
     processNewSignals();
-  }, [signals, analyses, settings, isAuthReady, user]);
+  }, [signals, analyses, settings, isAuthReady, user, isAnalysesLoaded, isQuotaExceeded]);
 
   if (loading) {
     return (
@@ -706,10 +754,57 @@ export default function App() {
               className="p-2 sm:p-3 hover:bg-rose-500/10 rounded-2xl transition-colors text-zinc-500 hover:text-rose-500 interactive-button"
               title="Terminate Link"
             >
-              <LogOut size={18} sm:size={20} />
+              <LogOut size={18} />
             </button>
           </div>
         </header>
+        
+        {/* Manual Narrative & Regime Input */}
+        <div className="px-4 sm:px-8 py-3 bg-zinc-900/20 border-b border-zinc-800/50 flex flex-col sm:flex-row items-center gap-4">
+          <div className="flex items-center gap-4 flex-1 w-full">
+            <div className="flex items-center gap-2 text-emerald-500 shrink-0">
+              <Activity size={16} className="animate-pulse" />
+              <span className="micro-label font-bold uppercase tracking-widest">Manual Narrative</span>
+            </div>
+            <input 
+              type="text"
+              value={manualNarrative}
+              onChange={(e) => setManualNarrative(e.target.value)}
+              placeholder="Input current market context (e.g. 'HTF liquidity sweep, looking for reversal')..."
+              className="flex-1 bg-transparent border-none focus:ring-0 text-xs text-zinc-300 placeholder:text-zinc-600 font-mono"
+            />
+            {manualNarrative && (
+              <button 
+                onClick={() => setManualNarrative('')}
+                className="text-zinc-600 hover:text-rose-500 transition-colors"
+              >
+                <EyeOff size={14} />
+              </button>
+            )}
+          </div>
+
+          <div className="h-4 w-px bg-zinc-800 hidden sm:block" />
+
+          <div className="flex items-center gap-3 shrink-0 w-full sm:w-auto overflow-x-auto no-scrollbar py-1">
+            <span className="micro-label font-bold uppercase tracking-widest text-zinc-500">Regime:</span>
+            <div className="flex gap-1">
+              {['EXPANSION', 'RETRACEMENT', 'REVERSAL', 'CONSOLIDATION'].map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setManualRegime(manualRegime === r ? '' : r)}
+                  className={cn(
+                    "px-2 py-1 rounded text-[8px] font-bold uppercase tracking-tighter transition-all border",
+                    manualRegime === r 
+                      ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-500 emerald-glow" 
+                      : "bg-zinc-900/50 border-zinc-800 text-zinc-600 hover:text-zinc-400"
+                  )}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
 
         <main className="flex-1 overflow-y-auto lg:overflow-hidden p-4 sm:p-0">
           <AnimatePresence mode="wait">
@@ -736,6 +831,8 @@ export default function App() {
                     setView('deep_audit');
                   }}
                   onSimulate={simulateWebhook}
+                  isQuotaExceeded={isQuotaExceeded}
+                  onRetryQuota={() => setIsQuotaExceeded(false)}
                 />
               </motion.div>
             )}
@@ -809,7 +906,7 @@ export default function App() {
                   users={allUsers} 
                   trades={trades} 
                   signals={signals} 
-                  analyses={Object.values(analyses)} 
+                  analyses={allAnalyses} 
                 />
               </motion.div>
             )}

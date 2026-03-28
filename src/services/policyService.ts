@@ -1,5 +1,5 @@
 import { collection, query, where, getDocs, orderBy, limit, Timestamp } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, handleFirestoreError, OperationType } from "../firebase";
 
 export type PolicyDecision = "ALLOW" | "HOLD" | "BLOCK" | "REQUIRE_HUMAN_REVIEW";
 
@@ -31,7 +31,20 @@ export async function fetchRiskMetrics(symbol: string, session: string): Promise
     collection(db, "trades"),
     where("executed_at", ">=", startOfDayTimestamp)
   );
-  const dailySnapshot = await getDocs(dailyTradesQ);
+  const dailySnapshot = await getDocs(dailyTradesQ).catch(e => handleFirestoreError(e, OperationType.GET, 'trades'));
+  
+  if (!dailySnapshot) return {
+    dailyLoss: 0,
+    drawdown: 0,
+    lossStreak: 0,
+    killSwitchActive: true,
+    symbolLocks: [],
+    sessionLocks: [],
+    regimeFragility: 100,
+    replayReportStatus: "PENDING",
+    productionGateStatus: "CLOSED"
+  };
+
   let dailyLoss = 0;
   dailySnapshot.docs.forEach(doc => {
     const data = doc.data();
@@ -44,7 +57,20 @@ export async function fetchRiskMetrics(symbol: string, session: string): Promise
     orderBy("executed_at", "desc"),
     limit(20)
   );
-  const recentSnapshot = await getDocs(recentTradesQ);
+  const recentSnapshot = await getDocs(recentTradesQ).catch(e => handleFirestoreError(e, OperationType.GET, 'trades'));
+  
+  if (!recentSnapshot) return {
+    dailyLoss,
+    drawdown: 0,
+    lossStreak: 0,
+    killSwitchActive: true,
+    symbolLocks: [],
+    sessionLocks: [],
+    regimeFragility: 100,
+    replayReportStatus: "PENDING",
+    productionGateStatus: "CLOSED"
+  };
+
   const recentTrades = recentSnapshot.docs.map(doc => doc.data());
 
   let lossStreak = 0;

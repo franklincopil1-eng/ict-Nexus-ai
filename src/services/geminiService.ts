@@ -1,7 +1,10 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { db } from "../firebase";
+import { db, handleFirestoreError, OperationType } from "../firebase";
 import { collection, query, orderBy, limit, getDocs, doc, getDoc, where } from "firebase/firestore";
 import { fetchRiskMetrics, checkInstitutionalPolicy, PolicyDecision } from "./policyService";
+import { RegimeService, Candle } from "./regimeService";
+import { MarketContextService, HTFContext, SMTContext } from "./marketContextService";
+import { NarrativeService, MarketNarrativeEntry } from "./narrativeService";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
@@ -10,83 +13,49 @@ DETERMINISTIC BEHAVIOR: You are a pure logic engine. No conversational filler. N
 ICT RULES: Strictly enforce Market Structure (BOS/CHOCH), Liquidity Sweeps, and POIs (OB/FVG).
 STRICT JSON OUTPUT: Return ONLY valid JSON matching the requested schema. No markdown. No text outside JSON.`;
 
-const VALIDATION_PROMPT = `STEP: signal_validation
-TASK: Validate the signal structure.
-Check:
-* symbol exists
-* signal_type exists
-* price data is valid
-* confidence is between 0–100`;
-
-const CONFLUENCE_PROMPT = `STEP: confluence_check
-TASK: Identify ICT confluences.
+const TECHNICAL_ANALYSIS_PROMPT = `STEP: technical_analysis
+TASK: Perform initial technical validation and confluence check.
+ICT RULES: Identify BOS/CHOCH, Liquidity Sweeps, and POIs.
 Check for:
-* SMT Divergence
-* Higher Timeframe (HTF) Alignment
-* Displacement
-* Market Structure Shift`;
+1. Signal structure validity (symbol, type, price).
+2. ICT confluences (SMT, HTF Alignment, Displacement).
+3. Confidence score (0-100).`;
 
-const KILLZONE_PROMPT = `STEP: killzone_check
-TASK: Check if signal occurs in valid ICT session.
-Valid sessions:
-* London: 07–10 UTC
-* New York: 12–15 UTC`;
+const DEEP_REASONING_PROMPT = `TASK: Make a trading decision using structured weighted context.
 
-const SCORING_PROMPT = `STEP: confidence_scoring
-TASK: Compute confidence score based on signal data.
+RULES:
+1. DO NOT override context scores. Use them as primary decision drivers.
+2. Only adjust confidence, not direction unless strong contradiction.
+3. NO OVERRIDE: Historical memory CANNOT override current invalid structure.
+4. WEAK SETUP: Success history CANNOT approve a currently weak setup.
+5. ICT RULES: Strictly enforce Market Structure (BOS/CHOCH), Liquidity Sweeps, and POIs (OB/FVG).
+
+INPUT:
+Signal: {signal}
+
+CONTEXT SCORES:
+- Regime Score: {regime_score} (Based on current market regime and bias)
+- HTF Alignment: {htf_alignment} (Based on High Timeframe bias)
+- Institutional Score: {institutional_score} (Based on SMT Divergence and institutional flow)
+- Narrative Alignment: {narrative_alignment} (Based on market narrative evolution)
+- Memory Confidence: {memory_confidence} (Based on historical success rate of similar setups)
+- User Bias Weight: {user_bias_weight} (Based on manual narrative/regime provided by user)
+
+INSTRUCTIONS:
+1. Determine directional bias (BUY / SELL / HOLD) based on weighted score.
+2. Adjust confidence using historical memory + narrative.
+3. Flag contradictions (e.g. bullish HTF but bearish regime).
+4. Identify key ICT levels (Order Blocks, Fair Value Gaps).
+5. Create a precise trade plan (Entry, SL, TP).
+6. Synthesize the narrative evolution.
+7. Output structured decision.`;
+
+const FINAL_DECISION_PROMPT = `STEP: final_decision
+TASK: Generate final execution decision and policy commentary.
 Rules:
-* Base: 60
-* +10 if signal_type is CHOCH or BOS
-* +10 if price action shows clear trend
-* +10 if volume/volatility is high`;
-
-const REASONING_PROMPT = `STEP: reasoning
-TASK: Analyze the current ICT signal using market structure and historical memory context.
-SAFEGUARDS:
-1. NO OVERRIDE: Historical memory CANNOT override current invalid structure. If CHOCH/BOS is missing, reject.
-2. WEAK SETUP: Success history CANNOT approve a currently weak setup.
-3. MEMORY AS CONTEXT: Use memory as context, not as absolute authority.
-You MUST:
-1. Analyze current market structure (CHOCH / BOS).
-2. Validate liquidity sweep (external or internal liquidity).
-3. Identify POI (Order Block or FVG).
-4. Assess risk-to-reward potential based on current structure.
-5. COMPARE WITH MEMORY: Review the provided 'memory_context' containing similar past setups and historical outcomes. 
-6. EVALUATE ALIGNMENT: Determine if historical memory strengthens or weakens your confidence in the current setup.
-   - Mention matched patterns (similarities).
-   - Mention conflicting patterns (differences).
-   - State if memory supports the trade.
-Reject weak setups regardless of memory.`;
-
-const EVALUATION_PROMPT = `STEP: evaluation
-TASK: You are a strict evaluator. You must VERIFY:
-1. Structure validity (CHOCH/BOS).
-2. Liquidity sweep validity.
-3. POI correctness (OB/FVG).
-4. Risk/reward ratio.
-5. BOUNDED SELF-LEARNING: Review 'feedback_context' for repeated failure patterns.
-6. ADAPTIVE STRICTNESS: Become stricter if historical evidence shows weakness for this symbol, session, or setup type.
-7. NO PERMISSIVE OVERRIDE: Never override hard ICT rules in a permissive direction. If the setup is technically invalid, it MUST be rejected regardless of historical success.
-8. CAUTION ONLY: Adaptation can ONLY increase caution, not reduce baseline standards.
-9. SESSION VALIDITY: Ensure the signal is within London (07-10 UTC) or NY (12-15 UTC) sessions, UNLESS 'bypass_killzone' is true in the input signal.
-REJECT IF: Technical rules are violated OR if historical failure patterns are strongly present.
-OUTPUT: You must report if you increased strictness and why.`;
-
-const EXECUTION_PROMPT = `STEP: execution_decision
-TASK: Decide whether to allow execution.
-Rules:
-* Must be approved by evaluator
-* Must meet confidence threshold (75)
-* Must not violate risk constraints
-Risk Rules: Min confidence 75, Min confluences 2, Valid London/NY sessions`;
-
-const POLICY_COMMENTARY_PROMPT = `STEP: policy_commentary
-TASK: Generate a human-readable explanation for a deterministic policy decision.
-You MUST:
-1. Explain why the decision (ALLOW/HOLD/BLOCK/REQUIRE_HUMAN_REVIEW) was made.
-2. Reference the specific metrics (daily loss, drawdown, streak, etc.) that triggered the decision.
-3. If HOLD or BLOCK, suggest what conditions need to improve for a future ALLOW.
-4. DO NOT change the decision. Your role is purely explanatory.`;
+1. Must be approved by evaluator.
+2. Must meet confidence threshold (75).
+3. Explain the decision based on institutional policy and risk metrics.`;
 
 async function llmRun(stepPrompt: string, input: any, schema: any, retries = 2) {
   let lastError: any;
@@ -149,6 +118,9 @@ export interface AnalysisResult {
   memory_references?: string[];
   feedback_context_summary?: string;
   memory_context?: any;
+  decision?: 'BUY' | 'SELL' | 'HOLD';
+  conflicts?: string[];
+  dominant_factors?: string[];
   trade_plan?: {
     entry: number;
     stop_loss: number;
@@ -171,75 +143,115 @@ export interface AnalysisResult {
   };
 }
 
-export async function validateSignal(signal: any) {
+export async function runTechnicalAnalysis(signal: any) {
   const schema = {
     type: Type.OBJECT,
     properties: {
       valid: { type: Type.BOOLEAN },
-      errors: { type: Type.ARRAY, items: { type: Type.STRING } }
-    },
-    required: ["valid", "errors"]
-  };
-  return llmRun(VALIDATION_PROMPT, signal, schema);
-}
-
-export async function checkConfluence(signal: any) {
-  const schema = {
-    type: Type.OBJECT,
-    properties: {
-      valid: { type: Type.BOOLEAN },
+      errors: { type: Type.ARRAY, items: { type: Type.STRING } },
       confluences: { type: Type.ARRAY, items: { type: Type.STRING } },
-      count: { type: Type.INTEGER }
+      initial_score: { type: Type.INTEGER }
     },
-    required: ["valid", "confluences", "count"]
+    required: ["valid", "errors", "confluences", "initial_score"]
   };
-  return llmRun(CONFLUENCE_PROMPT, signal, schema);
+  return llmRun(TECHNICAL_ANALYSIS_PROMPT, signal, schema);
 }
 
-export async function checkKillzone(signal: any) {
-  if (signal.bypass_killzone || signal.raw_data?.bypass_killzone) {
-    return { valid: true, session: "london", bypassed: true };
-  }
-
-  // Programmatic check to prevent LLM hallucination on time
-  const date = new Date(signal.timestamp || Date.now());
-  const hours = date.getUTCHours();
-  
-  let session: "london" | "new_york" | "invalid" = "invalid";
-  let valid = false;
-
-  if (hours >= 7 && hours < 10) {
-    session = "london";
-    valid = true;
-  } else if (hours >= 12 && hours < 15) {
-    session = "new_york";
-    valid = true;
-  }
-
-  console.log(`[KILLZONE] Programmatic check: ${hours} UTC -> ${session} (Valid: ${valid})`);
-  
-  return { valid, session };
+function calculateRegimeScore(regimeContext: any, signalType: string): number {
+  if (!regimeContext) return 50;
+  const bias = regimeContext.bias;
+  const isBuy = signalType.includes('BUY') || signalType.includes('BULLISH');
+  if (isBuy && bias === 'BULLISH') return 90;
+  if (!isBuy && bias === 'BEARISH') return 90;
+  if (bias === 'NEUTRAL') return 50;
+  return 20;
 }
 
-export async function scoreSignal(signal: any) {
+function calculateHTFAlignment(htfContext: any, signalType: string): number {
+  if (!htfContext) return 50;
+  const bias = htfContext.bias;
+  const isBuy = signalType.includes('BUY') || signalType.includes('BULLISH');
+  if (isBuy && bias === 'BULLISH') return 95;
+  if (!isBuy && bias === 'BEARISH') return 95;
+  return 10;
+}
+
+function calculateInstitutionalScore(smtContext: any, signalType: string): number {
+  if (!smtContext) return 50;
+  const isBuy = signalType.includes('BUY') || signalType.includes('BULLISH');
+  if (smtContext.divergence_detected) {
+    if (isBuy && smtContext.type === 'ACCUMULATION') return 90;
+    if (!isBuy && smtContext.type === 'DISTRIBUTION') return 90;
+    return 30;
+  }
+  return 50;
+}
+
+function calculateMemoryConfidence(memoryContext: any): number {
+  if (!memoryContext || !memoryContext.historical_outcomes) return 50;
+  const outcomes = memoryContext.historical_outcomes;
+  if (outcomes.length === 0) return 50;
+  const wins = outcomes.filter((o: any) => o.status === 'CLOSED_PROFIT' || o.status === 'PROFIT').length;
+  return (wins / outcomes.length) * 100;
+}
+
+export async function runDeepReasoning(signal: any, memoryContext: any, feedbackContext: any, regimeContext: any, htfContext: any, smtContext: any, narrativeContext: string, manualNarrative?: string, manualRegime?: string) {
+  const signalType = (signal.signal_type || "").toUpperCase();
+  
+  const regimeScore = calculateRegimeScore(regimeContext, signalType);
+  const htfAlignment = calculateHTFAlignment(htfContext, signalType);
+  const institutionalScore = calculateInstitutionalScore(smtContext, signalType);
+  const memoryConfidence = calculateMemoryConfidence(memoryContext);
+  const narrativeAlignment = narrativeContext.toLowerCase().includes(signalType.toLowerCase()) ? 85 : 40;
+  const userBiasWeight = (manualNarrative || manualRegime) ? 90 : 50;
+
+  const prompt = DEEP_REASONING_PROMPT
+    .replace('{signal}', JSON.stringify(signal))
+    .replace('{regime_score}', regimeScore.toString())
+    .replace('{htf_alignment}', htfAlignment.toString())
+    .replace('{institutional_score}', institutionalScore.toString())
+    .replace('{narrative_alignment}', narrativeAlignment.toString())
+    .replace('{memory_confidence}', memoryConfidence.toString())
+    .replace('{user_bias_weight}', userBiasWeight.toString());
+
   const schema = {
     type: Type.OBJECT,
     properties: {
-      score: { type: Type.INTEGER },
-      meets_threshold: { type: Type.BOOLEAN }
-    },
-    required: ["score", "meets_threshold"]
-  };
-  return llmRun(SCORING_PROMPT, signal, schema);
-}
-
-export async function reasonSignal(signal: any, memoryContext: any) {
-  const schema = {
-    type: Type.OBJECT,
-    properties: {
-      valid: { type: Type.BOOLEAN },
-      score: { type: Type.INTEGER },
-      explanation: { type: Type.STRING },
+      decision: { type: Type.STRING, enum: ["BUY", "SELL", "HOLD"] },
+      approved: { type: Type.BOOLEAN, description: "True if decision is BUY or SELL" },
+      confidence: { type: Type.INTEGER },
+      reasoning: { type: Type.STRING },
+      conflicts: { type: Type.ARRAY, items: { type: Type.STRING } },
+      dominant_factors: { type: Type.ARRAY, items: { type: Type.STRING } },
+      issues: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Duplicate of conflicts for backward compatibility" },
+      explanation: { type: Type.STRING, description: "Duplicate of reasoning for backward compatibility" },
+      narrative_synthesis: {
+        type: Type.OBJECT,
+        properties: {
+          evolution_insight: { type: Type.STRING },
+          is_story_consistent: { type: Type.BOOLEAN },
+          manual_narrative_impact: { type: Type.STRING },
+          manual_regime_impact: { type: Type.STRING }
+        },
+        required: ["evolution_insight", "is_story_consistent", "manual_narrative_impact", "manual_regime_impact"]
+      },
+      power_confluences: {
+        type: Type.OBJECT,
+        properties: {
+          htf_alignment: { type: Type.BOOLEAN },
+          smt_divergence: { type: Type.BOOLEAN },
+          institutional_bias: { type: Type.STRING }
+        },
+        required: ["htf_alignment", "smt_divergence", "institutional_bias"]
+      },
+      regime_alignment: {
+        type: Type.OBJECT,
+        properties: {
+          is_aligned: { type: Type.BOOLEAN },
+          reasoning: { type: Type.STRING }
+        },
+        required: ["is_aligned", "reasoning"]
+      },
       memory_alignment: {
         type: Type.OBJECT,
         properties: {
@@ -287,20 +299,7 @@ export async function reasonSignal(signal: any, memoryContext: any) {
           }
         },
         required: ["order_blocks", "fair_value_gaps"]
-      }
-    },
-    required: ["valid", "score", "explanation", "memory_alignment", "trade_plan", "ict_levels"]
-  };
-  return llmRun(REASONING_PROMPT, { signal, memory_context: memoryContext }, schema);
-}
-
-export async function evaluateSignal(signal: any, reasoning: any, feedbackContext: any) {
-  const schema = {
-    type: Type.OBJECT,
-    properties: {
-      approved: { type: Type.BOOLEAN },
-      confidence: { type: Type.INTEGER },
-      issues: { type: Type.ARRAY, items: { type: Type.STRING } },
+      },
       feedback_effect: {
         type: Type.OBJECT,
         properties: {
@@ -310,32 +309,58 @@ export async function evaluateSignal(signal: any, reasoning: any, feedbackContex
         required: ["increased_strictness", "reasons"]
       }
     },
-    required: ["approved", "confidence", "issues", "feedback_effect"]
+    required: ["decision", "approved", "confidence", "reasoning", "conflicts", "dominant_factors", "narrative_synthesis", "power_confluences", "regime_alignment", "memory_alignment", "trade_plan", "ict_levels", "feedback_effect"]
   };
-  return llmRun(EVALUATION_PROMPT, { signal, reasoning, feedback_context: feedbackContext }, schema);
+
+  return llmRun(prompt, { 
+    signal, 
+    memory_context: memoryContext, 
+    feedback_context: feedbackContext,
+    regime_context: regimeContext,
+    htf_context: htfContext,
+    smt_context: smtContext,
+    narrative_context: narrativeContext,
+    manual_narrative: manualNarrative || "No manual narrative provided.",
+    manual_regime: manualRegime || "No manual regime provided."
+  }, schema);
 }
 
-export async function decideExecution(evaluation: any, policy: any) {
+export async function runFinalDecision(evaluation: any, policy: any, metrics: any) {
   const schema = {
     type: Type.OBJECT,
     properties: {
       decision: { type: Type.STRING, enum: ["ALLOW", "BLOCK"] },
-      reason: { type: Type.STRING }
-    },
-    required: ["decision", "reason"]
-  };
-  return llmRun(EXECUTION_PROMPT, { evaluation, policy }, schema);
-}
-
-export async function generatePolicyCommentary(policy: any, metrics: any) {
-  const schema = {
-    type: Type.OBJECT,
-    properties: {
+      reason: { type: Type.STRING },
       commentary: { type: Type.STRING }
     },
-    required: ["commentary"]
+    required: ["decision", "reason", "commentary"]
   };
-  return llmRun(POLICY_COMMENTARY_PROMPT, { policy, metrics }, schema);
+  return llmRun(FINAL_DECISION_PROMPT, { evaluation, policy, metrics }, schema);
+}
+
+export async function checkKillzone(signal: any) {
+  if (signal.bypass_killzone || signal.raw_data?.bypass_killzone) {
+    return { valid: true, session: "london", bypassed: true };
+  }
+
+  // Programmatic check to prevent LLM hallucination on time
+  const date = new Date(signal.timestamp || Date.now());
+  const hours = date.getUTCHours();
+  
+  let session: "london" | "new_york" | "invalid" = "invalid";
+  let valid = false;
+
+  if (hours >= 7 && hours < 10) {
+    session = "london";
+    valid = true;
+  } else if (hours >= 12 && hours < 15) {
+    session = "new_york";
+    valid = true;
+  }
+
+  console.log(`[KILLZONE] Programmatic check: ${hours} UTC -> ${session} (Valid: ${valid})`);
+  
+  return { valid, session };
 }
 
 async function retrieveMemoryContext(signal: any) {
@@ -347,8 +372,17 @@ async function retrieveMemoryContext(signal: any) {
       where("symbol", "==", signal.symbol),
       limit(10)
     );
-    const signalsSnapshot = await getDocs(signalsQ);
+    const signalsSnapshot = await getDocs(signalsQ).catch(e => handleFirestoreError(e, OperationType.GET, 'signals'));
     
+    if (!signalsSnapshot) return {
+      similar_setups: [],
+      historical_outcomes: [],
+      market_regime: null,
+      htf_bias: null,
+      smt_divergence: null,
+      narrative_history: []
+    };
+
     const similar = signalsSnapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() }))
       .filter((s: any) => s.signal_type === signal.signal_type)
@@ -360,7 +394,17 @@ async function retrieveMemoryContext(signal: any) {
       where("symbol", "==", signal.symbol),
       limit(10)
     );
-    const tradesSnapshot = await getDocs(tradesQ);
+    const tradesSnapshot = await getDocs(tradesQ).catch(e => handleFirestoreError(e, OperationType.GET, 'trades'));
+    
+    if (!tradesSnapshot) return {
+      similar_setups: similar,
+      historical_outcomes: [],
+      market_regime: null,
+      htf_bias: null,
+      smt_divergence: null,
+      narrative_history: []
+    };
+
     const outcomes = tradesSnapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() }))
       .slice(0, 3);
@@ -400,7 +444,7 @@ async function fetchPerformance() {
     const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   } catch (error) {
-    console.error("Failed to fetch performance:", error);
+    handleFirestoreError(error, OperationType.GET, 'trades');
     return [];
   }
 }
@@ -448,158 +492,146 @@ async function fetchSettings() {
     }
     return null;
   } catch (error) {
-    console.error("Failed to fetch settings:", error);
+    handleFirestoreError(error, OperationType.GET, 'settings/trading_config');
     return null;
   }
 }
 
-export async function processSignal(signal: any, onProgress?: (stage: string, result: any) => void) {
-  console.log("[ORCHESTRATOR] Starting Advanced Pipeline for signal:", signal.id || "new");
+export async function testSystemHealth() {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: "Respond with 'OK' if you are functional.",
+      config: {
+        maxOutputTokens: 5
+      }
+    });
+    return response.text.trim().toUpperCase().includes('OK');
+  } catch (error) {
+    console.error("[HEALTH CHECK] Gemini API failed:", error);
+    return false;
+  }
+}
+
+export async function processSignal(signal: any, onProgress?: (stage: string, result: any) => void, manualNarrative?: string, manualRegime?: string) {
+  console.log("[ORCHESTRATOR] Starting Optimized Pipeline for signal:", signal.id || "new");
   
   const pipelineResults: any = {};
 
   try {
-    // 1. signal_validation
-    console.log("[1/10] [VALIDATION] Input:", signal);
-    const validation = await validateSignal(signal);
-    pipelineResults.validation = validation;
-    if (onProgress) onProgress('validation', validation);
+    // 1. Technical Analysis (Validation + Confluence)
+    console.log("[1/4] [TECHNICAL ANALYSIS] Input:", signal);
+    const techAnalysis = await runTechnicalAnalysis(signal);
+    pipelineResults.validation = { valid: techAnalysis.valid, errors: techAnalysis.errors };
+    pipelineResults.confluence = { valid: techAnalysis.valid, confluences: techAnalysis.confluences, count: techAnalysis.confluences.length };
+    pipelineResults.scoring = { score: techAnalysis.initial_score, meets_threshold: techAnalysis.initial_score >= 60 };
     
-    console.log("[1/10] [VALIDATION] Output:", validation);
-    if (!validation.valid) {
-      console.log("[VALIDATION] Status: REJECTED");
-      return { status: "REJECTED", stage: "validation", result: validation, errors: validation.errors, pipeline_results: pipelineResults };
+    if (onProgress) onProgress('technical_analysis', techAnalysis);
+    
+    if (!techAnalysis.valid) {
+      return { status: "REJECTED", stage: "technical_analysis", result: techAnalysis, errors: techAnalysis.errors, pipeline_results: pipelineResults };
     }
-    console.log("[VALIDATION] Status: SUCCESS");
 
-    // 2. confluence_check
-    console.log("[2/10] [CONFLUENCE] Input:", signal);
-    const confluence = await checkConfluence(signal);
-    pipelineResults.confluence = confluence;
-    if (onProgress) onProgress('confluence', confluence);
-
-    console.log("[2/10] [CONFLUENCE] Output:", confluence);
-    if (!confluence.valid) {
-      console.log("[CONFLUENCE] Status: REJECTED");
-      return { status: "REJECTED", stage: "confluence", result: confluence, errors: ["Insufficient confluences identified"], pipeline_results: pipelineResults };
-    }
-    console.log("[CONFLUENCE] Status: SUCCESS");
-
-    // 3. killzone_check
-    console.log("[3/10] [KILLZONE] Input:", signal);
+    // 2. Killzone Check (Programmatic)
+    console.log("[2/4] [KILLZONE] Input:", signal);
     const killzone = await checkKillzone(signal);
     pipelineResults.killzone = killzone;
     if (onProgress) onProgress('killzone', killzone);
 
-    console.log("[3/10] [KILLZONE] Output:", killzone);
     if (!killzone.valid) {
-      console.log("[KILLZONE] Status: REJECTED");
-      return { status: "REJECTED", stage: "killzone", result: killzone, errors: [`Signal outside valid ICT Killzone (Session: ${killzone.session})`], pipeline_results: pipelineResults };
+      return { status: "REJECTED", stage: "killzone", result: killzone, errors: [`Signal outside valid ICT Killzone`], pipeline_results: pipelineResults };
     }
-    console.log("[KILLZONE] Status: SUCCESS");
 
-    // 4. confidence_scoring
-    console.log("[4/10] [SCORING] Input:", signal);
-    const scoring = await scoreSignal(signal);
-    pipelineResults.scoring = scoring;
-    if (onProgress) onProgress('scoring', scoring);
-
-    console.log("[4/10] [SCORING] Output:", scoring);
-    if (!scoring.meets_threshold) {
-      console.log("[SCORING] Status: REJECTED");
-      return { status: "REJECTED", stage: "scoring", result: scoring, errors: [`Signal confidence (${scoring.score}) below threshold (75)`], pipeline_results: pipelineResults };
-    }
-    console.log("[SCORING] Status: SUCCESS");
-
-    // 5. memory_retrieval & 6. reasoning
-    console.log("[5/10] [MEMORY] Retrieving context...");
-    const memoryContext = await retrieveMemoryContext(signal);
-    pipelineResults.memory_context = memoryContext;
-    if (onProgress) onProgress('memory_context', memoryContext);
-
-    console.log("[6/10] [REASONING] Input:", { signal, memory_context: memoryContext });
-    const reasoning = await reasonSignal(signal, memoryContext);
-    pipelineResults.reasoning = reasoning;
-    if (onProgress) onProgress('reasoning', reasoning);
-
-    console.log("[6/10] [REASONING] Output:", reasoning);
-    if (!reasoning.valid) {
-      console.log("[REASONING] Status: REJECTED");
-      return { status: "REJECTED", stage: "reasoning", result: reasoning, errors: [reasoning.explanation], pipeline_results: pipelineResults };
-    }
-    console.log("[REASONING] Status: SUCCESS");
-
-    // 7. evaluator_feedback_context & 8. evaluation
-    console.log("[7/10] [FEEDBACK] Building context...");
-    const feedbackContext = await buildEvaluatorFeedbackContext(signal, killzone.session);
-    pipelineResults.feedback = feedbackContext;
-    if (onProgress) onProgress('feedback', feedbackContext);
+    // 3. Deep Reasoning & Evaluation
+    console.log("[3/4] [DEEP REASONING] Detecting regime and institutional context...");
     
-    console.log("[8/10] [EVALUATION] Input:", { signal, reasoning, feedback_context: feedbackContext });
-    const evaluation = await evaluateSignal(signal, reasoning, feedbackContext);
-    pipelineResults.evaluation = evaluation;
-    if (onProgress) onProgress('evaluation', evaluation);
+    // Detect Regime (Reliable Context)
+    const candles: Candle[] = signal.raw_data?.candles || [];
+    const regimeContext = RegimeService.detectRegime(candles);
+    pipelineResults.regime = regimeContext;
 
-    console.log("[8/10] [EVALUATION] Output:", evaluation);
-    if (!evaluation.approved) {
-      console.log("[EVALUATION] Status: REJECTED");
-      return { status: "REJECTED", stage: "evaluation", result: evaluation, errors: evaluation.issues, pipeline_results: pipelineResults };
+    // Detect Institutional Context (HTF & SMT)
+    const htfCandles: Candle[] = signal.raw_data?.htf_candles || [];
+    const correlatedCandles: Candle[] = signal.raw_data?.correlated_candles || [];
+    
+    const htfContext = MarketContextService.analyzeHTF(signal, htfCandles);
+    const smtContext = MarketContextService.detectSMT(candles, correlatedCandles);
+    
+    pipelineResults.htf_bias = htfContext;
+    pipelineResults.smt_divergence = smtContext;
+
+    // 3.5 Record and Retrieve Narrative (Evolution Context)
+    console.log("[3.5/4] [NARRATIVE] Recording current state and retrieving evolution context...");
+    await NarrativeService.recordState(regimeContext, htfContext, smtContext);
+    const narrativeHistory = await NarrativeService.getRecentNarrative(5);
+    const narrativeAIContext = NarrativeService.formatForAI(narrativeHistory);
+    pipelineResults.narrative_history = narrativeHistory;
+
+    const memoryContext = await retrieveMemoryContext(signal);
+    const feedbackContext = await buildEvaluatorFeedbackContext(signal, killzone.session);
+    pipelineResults.memory_context = memoryContext;
+    pipelineResults.feedback = feedbackContext;
+    pipelineResults.manual_narrative = manualNarrative;
+    pipelineResults.manual_regime = manualRegime;
+
+    const deepReasoning = await runDeepReasoning(signal, memoryContext, feedbackContext, regimeContext, htfContext, smtContext, narrativeAIContext, manualNarrative, manualRegime);
+    pipelineResults.reasoning = deepReasoning;
+    pipelineResults.evaluation = { approved: deepReasoning.approved, confidence: deepReasoning.confidence, issues: deepReasoning.issues, feedback_effect: deepReasoning.feedback_effect };
+    
+    if (onProgress) onProgress('deep_reasoning', deepReasoning);
+
+    if (!deepReasoning.approved) {
+      return { 
+        status: "REJECTED", 
+        stage: "deep_reasoning", 
+        result: deepReasoning, 
+        errors: deepReasoning.issues, 
+        pipeline_results: pipelineResults,
+        decision: deepReasoning.decision,
+        confidence: deepReasoning.confidence,
+        reasoning: deepReasoning.reasoning,
+        conflicts: deepReasoning.conflicts,
+        dominant_factors: deepReasoning.dominant_factors
+      };
     }
-    console.log("[EVALUATION] Status: SUCCESS");
 
-    // 9. policy_override
-    console.log("[9/10] [POLICY] Checking institutional limits...");
+    // 4. Final Decision & Policy
+    console.log("[4/4] [FINAL DECISION] Checking institutional limits...");
     let metrics = null;
     let settings = null;
     try {
       metrics = await fetchRiskMetrics(signal.symbol, killzone.session);
       settings = await fetchSettings();
     } catch (e) {
-      console.error("[POLICY] Failed to fetch risk data. Safety protocol: FAIL CLOSED.");
+      console.error("[POLICY] Failed to fetch risk data.");
     }
-    const policy = await checkInstitutionalPolicy(signal, evaluation, metrics, settings);
     
-    // 9.5. policy_commentary
-    console.log("[9.5/10] [COMMENTARY] Generating explanation...");
-    const commentaryResult = await generatePolicyCommentary(policy, metrics);
-    const commentary = commentaryResult.commentary;
-    const policyWithCommentary = { ...policy, commentary };
+    const policy = await checkInstitutionalPolicy(signal, pipelineResults.evaluation, metrics, settings);
+    const finalDecision = await runFinalDecision(pipelineResults.evaluation, policy, metrics);
+    
+    const policyWithCommentary = { ...policy, commentary: finalDecision.commentary };
     pipelineResults.policy = policyWithCommentary;
-    if (onProgress) onProgress('policy', policyWithCommentary);
+    pipelineResults.execution = { decision: finalDecision.decision, reason: finalDecision.reason };
+    
+    if (onProgress) onProgress('final_decision', finalDecision);
 
-    if (policy.decision !== "ALLOW") {
-      console.log("[POLICY] Status: VETOED/HOLD");
-      return { 
-        status: "REJECTED", 
-        stage: "policy",
-        result: policyWithCommentary,
-        errors: [policy.reason],
-        pipeline_results: pipelineResults
-      };
+    if (finalDecision.decision === "BLOCK") {
+      return { status: "REJECTED", stage: "final_decision", result: finalDecision, errors: [finalDecision.reason], pipeline_results: pipelineResults };
     }
-    console.log("[POLICY] Status: SUCCESS");
-
-    // 10. execution_decision
-    console.log("[10/10] [EXECUTION] Final decision...");
-    const execution = await decideExecution(evaluation, policy);
-    pipelineResults.execution = execution;
-    if (onProgress) onProgress('execution', execution);
-
-    console.log("[10/10] [EXECUTION] Output:", execution);
-    if (execution.decision === "BLOCK") {
-      console.log("[EXECUTION] Status: REJECTED");
-      return { status: "REJECTED", stage: "execution", result: execution, errors: [execution.reason], pipeline_results: pipelineResults };
-    }
-    console.log("[EXECUTION] Status: SUCCESS");
 
     console.log("[ORCHESTRATOR] Pipeline COMPLETE");
     return {
       status: "COMPLETE",
+      decision: pipelineResults.reasoning.decision,
+      confidence: pipelineResults.reasoning.confidence,
+      reasoning: pipelineResults.reasoning.reasoning,
+      conflicts: pipelineResults.reasoning.conflicts,
+      dominant_factors: pipelineResults.reasoning.dominant_factors,
       memory_references: [
         ...memoryContext.similar_setups.map((s: any) => s.id),
         ...memoryContext.historical_outcomes.map((o: any) => o.id)
       ],
-      feedback_context_summary: `WinRate: ${feedbackContext.symbol_stats.win_rate.toFixed(1)}% | RecentFailures: ${feedbackContext.recent_loss_patterns.length}`,
+      feedback_context_summary: `WinRate: ${feedbackContext.symbol_stats.win_rate.toFixed(1)}%`,
       pipeline_results: pipelineResults
     };
   } catch (error) {
@@ -608,8 +640,8 @@ export async function processSignal(signal: any, onProgress?: (stage: string, re
   }
 }
 
-export async function analyzeSignal(signal: any, onProgress?: (stage: string, result: any) => void): Promise<AnalysisResult> {
-  const result = await processSignal(signal, onProgress);
+export async function analyzeSignal(signal: any, onProgress?: (stage: string, result: any) => void, manualNarrative?: string, manualRegime?: string): Promise<AnalysisResult> {
+  const result = await processSignal(signal, onProgress, manualNarrative, manualRegime);
   
   if (result.status === "REJECTED") {
     return { 
@@ -624,17 +656,17 @@ export async function analyzeSignal(signal: any, onProgress?: (stage: string, re
   }
 
   const signalType = (signal.signal_type || "").toUpperCase();
-  const recommendation = signalType.includes('BUY') || signalType.includes('BULLISH') ? 'BUY' : 
-                         signalType.includes('SELL') || signalType.includes('BEARISH') ? 'SELL' : 'HOLD';
-
   const pipeline = result.pipeline_results;
+  const recommendation = pipeline.reasoning.decision || 
+                         (signalType.includes('BUY') || signalType.includes('BULLISH') ? 'BUY' : 
+                          signalType.includes('SELL') || signalType.includes('BEARISH') ? 'SELL' : 'HOLD');
 
   return {
     valid: true,
     errors: [],
     session: pipeline.killzone.session as any,
-    gpt_analysis: pipeline.reasoning.explanation,
-    confidence_score: pipeline.evaluation.confidence,
+    gpt_analysis: pipeline.reasoning.reasoning || pipeline.reasoning.explanation,
+    confidence_score: pipeline.reasoning.confidence,
     recommendation: recommendation as any,
     memory_alignment: pipeline.reasoning.memory_alignment,
     feedback_effect: pipeline.evaluation.feedback_effect,
@@ -644,6 +676,9 @@ export async function analyzeSignal(signal: any, onProgress?: (stage: string, re
     memory_references: result.memory_references,
     feedback_context_summary: result.feedback_context_summary,
     memory_context: pipeline.memory_context,
+    decision: result.decision,
+    conflicts: result.conflicts,
+    dominant_factors: result.dominant_factors,
     trade_plan: pipeline.reasoning.trade_plan,
     ict_levels: pipeline.reasoning.ict_levels,
     pipeline_results: pipeline

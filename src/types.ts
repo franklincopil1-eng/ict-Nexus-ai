@@ -35,7 +35,12 @@ export interface Analysis {
   memory_alignment?: any;
   feedback_effect?: any;
   memory_context?: any;
+  manual_narrative?: string;
+  manual_regime?: string;
   pipeline_results?: any;
+  decision?: 'BUY' | 'SELL' | 'HOLD';
+  conflicts?: string[];
+  dominant_factors?: string[];
   trade_plan?: {
     entry?: number;
     stop_loss?: number;

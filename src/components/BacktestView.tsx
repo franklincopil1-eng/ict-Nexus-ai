@@ -23,6 +23,7 @@ import {
 } from 'recharts';
 import { cn } from '../lib/utils';
 import { BacktestResult } from '../services/backtestService';
+import EquityCurveChart from './EquityCurveChart';
 
 interface BacktestViewProps {
   isBacktesting: boolean;
@@ -224,47 +225,7 @@ const BacktestView = ({
                 </div>
               </div>
               <div className="h-[300px] sm:h-[400px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={backtestResult.equityCurve}>
-                    <defs>
-                      <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#18181b" vertical={false} />
-                    <XAxis 
-                      dataKey="time" 
-                      stroke="#3f3f46" 
-                      fontSize={10} 
-                      tickLine={false} 
-                      axisLine={false}
-                      tickFormatter={(val) => new Date(val).toLocaleDateString()}
-                    />
-                    <YAxis 
-                      stroke="#3f3f46" 
-                      fontSize={10} 
-                      tickLine={false} 
-                      axisLine={false}
-                      tickFormatter={(val) => `$${val.toLocaleString()}`}
-                    />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '12px', padding: '12px' }}
-                      itemStyle={{ color: '#10b981', fontWeight: '600', fontSize: '12px' }}
-                      labelStyle={{ color: '#a1a1aa', fontSize: '10px', marginBottom: '4px' }}
-                      cursor={{ stroke: '#10b981', strokeWidth: 1, strokeDasharray: '4 4' }}
-                    />
-                    <Area 
-                      type="monotone" 
-                      dataKey="balance" 
-                      stroke="#10b981" 
-                      strokeWidth={2}
-                      fillOpacity={1} 
-                      fill="url(#colorBalance)" 
-                      animationDuration={1500}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
+                <EquityCurveChart data={backtestResult.equityCurve} />
               </div>
             </div>
 
