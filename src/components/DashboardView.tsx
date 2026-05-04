@@ -250,7 +250,7 @@ const DashboardView = ({
                 <Zap size={10} className="text-emerald-500" />
                 <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest">Neural Spotlight</span>
               </div>
-              <AnimatePresence mode="popLayout">
+              <AnimatePresence mode="wait">
                 {spotlightSignals.map((signal) => (
                   <SignalRow 
                     key={signal.id} 
@@ -273,7 +273,7 @@ const DashboardView = ({
                 <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest">Neural Matrix</span>
               </div>
               <div className="space-y-1">
-                <AnimatePresence mode="popLayout">
+                <AnimatePresence mode="wait">
                   {matrixSignals.map((signal) => (
                     <SignalRow 
                       key={signal.id} 

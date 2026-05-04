@@ -59,7 +59,6 @@ import {
   YAxis, 
   CartesianGrid, 
   Tooltip, 
-  ResponsiveContainer,
   AreaChart,
   Area,
   BarChart,

@@ -18,8 +18,7 @@ import {
   XAxis, 
   YAxis, 
   CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer 
+  Tooltip
 } from 'recharts';
 import { cn } from '../lib/utils';
 import { BacktestResult } from '../services/backtestService';

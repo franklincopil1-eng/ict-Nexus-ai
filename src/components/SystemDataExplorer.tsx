@@ -329,7 +329,7 @@ const SystemDataExplorer = ({ users, trades, signals, analyses }: SystemDataExpl
 
         {/* Horizontal Ribbon */}
         <div className="flex gap-4 overflow-x-auto pb-6 px-2 custom-scrollbar snap-x">
-          <AnimatePresence mode="popLayout">
+          <AnimatePresence mode="wait">
             {data.length > 0 ? (
               data.map((item: any) => {
                 const id = item.uid || item.id;
@@ -471,7 +471,7 @@ const SystemDataExplorer = ({ users, trades, signals, analyses }: SystemDataExpl
         </div>
 
         <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
-          <AnimatePresence mode="popLayout">
+          <AnimatePresence mode="wait">
             {data.length > 0 ? (
               data.map((item: any) => {
                   const id = item.uid || item.id;

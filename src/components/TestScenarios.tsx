@@ -134,13 +134,16 @@ const TestScenarios = () => {
       });
 
       const data = await response.json();
+      console.log("Injection response:", data);
 
       if (response.ok) {
         setStatus({ id: scenario.id, type: 'success', message: 'Signal Injected Successfully' });
       } else {
-        setStatus({ id: scenario.id, type: 'error', message: data.error || 'Injection Failed' });
+        const errorMsg = data.details || data.error || 'Injection Failed';
+        setStatus({ id: scenario.id, type: 'error', message: errorMsg });
       }
     } catch (error) {
+      console.error('Injection error:', error);
       setStatus({ id: scenario.id, type: 'error', message: 'Network Error' });
     } finally {
       setLoadingId(null);

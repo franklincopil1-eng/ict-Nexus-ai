@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import { db, handleFirestoreError, OperationType } from "../firebase";
 import { collection, query, orderBy, limit, getDocs, doc, getDoc, where } from "firebase/firestore";
 import { fetchRiskMetrics, checkInstitutionalPolicy, PolicyDecision } from "./policyService";
@@ -11,7 +11,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 const SYSTEM_PROMPT = `SYSTEM ROLE: ICT AI TRADING AGENT
 DETERMINISTIC BEHAVIOR: You are a pure logic engine. No conversational filler. No speculation.
 ICT RULES: Strictly enforce Market Structure (BOS/CHOCH), Liquidity Sweeps, and POIs (OB/FVG).
-STRICT JSON OUTPUT: Return ONLY valid JSON matching the requested schema. No markdown. No text outside JSON.`;
+STRICT JSON OUTPUT: Return ONLY valid JSON matching the requested schema. Be extremely concise in all text fields. No markdown. No text outside JSON.`;
 
 const TECHNICAL_ANALYSIS_PROMPT = `STEP: technical_analysis
 TASK: Perform initial technical validation and confluence check.
@@ -71,7 +71,11 @@ async function llmRun(stepPrompt: string, input: any, schema: any, retries = 2) 
         config: {
           systemInstruction: SYSTEM_PROMPT,
           responseMimeType: "application/json",
-          responseSchema: schema
+          responseSchema: schema,
+          maxOutputTokens: 4096, // Explicit limit to prevent runaway generation
+          thinkingConfig: {
+            thinkingLevel: ThinkingLevel.LOW // Minimize latency and token usage
+          }
         }
       });
 
@@ -272,9 +276,11 @@ export async function runDeepReasoning(signal: any, memoryContext: any, feedback
       },
       ict_levels: {
         type: Type.OBJECT,
+        description: "Key ICT levels identified in the setup. Limit to top 3 most relevant levels.",
         properties: {
           order_blocks: {
             type: Type.ARRAY,
+            description: "Limit to top 3 most relevant order blocks.",
             items: {
               type: Type.OBJECT,
               properties: {
@@ -287,6 +293,7 @@ export async function runDeepReasoning(signal: any, memoryContext: any, feedback
           },
           fair_value_gaps: {
             type: Type.ARRAY,
+            description: "Limit to top 3 most relevant fair value gaps.",
             items: {
               type: Type.OBJECT,
               properties: {

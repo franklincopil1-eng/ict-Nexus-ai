@@ -352,7 +352,7 @@ const DeepAuditView = ({ signal, analysis, selectedStageId, onBack }: DeepAuditV
               ref={outputRef}
               className="flex-1 bg-zinc-950/50 rounded-2xl border border-zinc-800/50 p-6 font-mono text-[10px] overflow-auto custom-scrollbar"
             >
-              <AnimatePresence mode="popLayout">
+              <AnimatePresence mode="wait">
                 {analysis?.pipeline_results ? (
                   Object.entries(analysis.pipeline_results).map(([stage, result], i) => {
                     const status = getStageStatus(stage);
